@@ -7,7 +7,9 @@ authors = [
     { name = "Jemuel B Jeroham", email = "jemuelbjeroham@outlook.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "ruff>=0.16.4",
+]
 
 [project.scripts]
 lisa = "lisa:main"
