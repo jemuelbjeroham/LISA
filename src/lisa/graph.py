@@ -7,10 +7,11 @@ def orchestrator(state: LISAState) -> dict:
     print("Orchestrator received: ", state["messages"])
     return {}
 
-builder = StateGraph(LISAState)
+def build_graph() -> StateGraph:
+    builder = StateGraph(LISAState)
 
-builder.add_node("orchestrator", orchestrator)
-builder.add_edge(START, "orchestrator")
-builder.add_edge("orchestrator", END)
+    builder.add_node("orchestrator", orchestrator)
+    builder.add_edge(START, "orchestrator")
+    builder.add_edge("orchestrator", END)
 
-graph = builder.compile()
+    return builder.compile()

@@ -1,6 +1,8 @@
-from lisa.graph import graph
+from lisa.graph import build_graph
 
 
 class LISA:
     def __init__(self):
-        self.graph = graph
+        self.graph = build_graph()
+
+    
