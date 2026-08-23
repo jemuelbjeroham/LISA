@@ -1,16 +1,13 @@
 from langgraph.graph import END, START, StateGraph
 
+from lisa.orchestrator import Orchestrator
 from lisa.state import LISAState
 
 
-def orchestrator(state: LISAState) -> dict:
-    print("Orchestrator received: ", state["messages"])
-    return {}
-
-def build_graph() -> StateGraph:
+def build_graph(orchestrator: Orchestrator):
     builder = StateGraph(LISAState)
 
-    builder.add_node("orchestrator", orchestrator)
+    builder.add_node("orchestrator", orchestrator.route)
     builder.add_edge(START, "orchestrator")
     builder.add_edge("orchestrator", END)
 
