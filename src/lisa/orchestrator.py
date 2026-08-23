@@ -1,6 +1,6 @@
 from langchain_core.language_models import BaseChatModel
 
-from lisa.routing import Route, RoutingDecision
+from lisa.routing import RoutingDecision
 from lisa.state import LISAState
 
 
