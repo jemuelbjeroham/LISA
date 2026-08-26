@@ -1,5 +1,5 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from lisa.knowledge.protocol import KnowledgeRetriever
 from lisa.state import LISAState
@@ -15,9 +15,14 @@ class TechnicalClarificationAgent:
         user_message = state["messages"][-1]
 
         knowledge = self.retriever.retrieve(user_message.content)
+        knowledge_context = "\n\n".join(knowledge)
         messages = [
-            SystemMessage(
-                content=self.system_prompt
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(
+                    f"Technical knowledge:\n\n"
+                    f"{knowledge_context}\n\n"
+                    f"User question:\n\n"
+                    f"{user_message.content}"
             ),
             *state["messages"]
         ]
