@@ -1,5 +1,6 @@
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
@@ -8,7 +9,8 @@ from lisa.orchestrator import Orchestrator
 from lisa.routing import Route
 
 
-def test_graph_routes_to_technical_clarification_agent():
+@pytest.mark.anyio
+async def test_graph_routes_to_technical_clarification_agent():
     model = Mock()
 
     structured_model = Mock()
@@ -24,9 +26,9 @@ def test_graph_routes_to_technical_clarification_agent():
     )
 
     retriever = Mock()
-    retriever.retrieve.return_value = [
-        "Relevant technical documentation."
-    ]
+    retriever.retrieve = AsyncMock(
+        return_value=["Relevant technical documentation."]
+    )
 
     orchestrator = Orchestrator(
         model=model,
@@ -44,7 +46,7 @@ def test_graph_routes_to_technical_clarification_agent():
         technical_clarification_agent=technical_clarification_agent,
     )
 
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {
             "messages": [
                 HumanMessage(
@@ -59,7 +61,7 @@ def test_graph_routes_to_technical_clarification_agent():
         "This is the technical explanation."
     )
 
-    retriever.retrieve.assert_called_once_with(
+    retriever.retrieve.assert_awaited_once_with(
         "Why is CH398 stuck in deleting state?"
     )
 

@@ -2,6 +2,6 @@ from typing import Protocol
 
 
 class KnowledgeRetriever(Protocol):
-    def retrieve(self, query: str) -> list[str]:
+    async def retrieve(self, query: str) -> list[str]:
         pass
 

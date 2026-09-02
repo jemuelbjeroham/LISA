@@ -11,10 +11,10 @@ class TechnicalClarificationAgent:
         self.retriever = retriever
         self.system_prompt = system_prompt
 
-    def run(self, state: LISAState):
+    async def run(self, state: LISAState):
         user_message = state["messages"][-1]
 
-        knowledge = self.retriever.retrieve(user_message.content)
+        knowledge = await self.retriever.retrieve(user_message.content)
         knowledge_context = "\n\n".join(knowledge)
         messages = [
             SystemMessage(content=self.system_prompt),
