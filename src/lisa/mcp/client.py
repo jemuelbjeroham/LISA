@@ -38,3 +38,10 @@ class MCPClient:
             raise RuntimeError("MCP client is not connected")
 
         return await self.session.list_tools()
+
+    async def call_tool(self, name: str, arguments: dict):
+        if self.session is None:
+            raise RuntimeError("MCP client is not connected")
+
+        return await self.session.call_tool(name, arguments)
+    
