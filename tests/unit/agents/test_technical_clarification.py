@@ -1,19 +1,21 @@
 from unittest.mock import Mock
 
+import pytest
 from langchain_core.messages import HumanMessage
 
-from lisa.agents.technical_clarification import (
-    TechnicalClarificationAgent,
-)
+from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.routing import Route
 
 
 class TestKnowledgeRetriever:
-    def retrieve(self, query: str) -> list[str]:
-        return ["Relevant technical documentation"]
+    async def retrieve(self, query: str) -> list[str]:
+        return [
+            "The firewall is unreachable after commiting a firewall rule"
+        ]
 
 
-def test_technical_clarification_retrieves_knowledge():
+@pytest.mark.anyio
+async def test_technical_clarification_retrieves_knowledge():
     model = Mock()
 
     model.invoke.return_value = Mock(
@@ -31,12 +33,12 @@ def test_technical_clarification_retrieves_knowledge():
     state = {
         "messages": [
             HumanMessage(
-                content="Why is the channel stuck?"
+                content="Why the firewall is unreachable?"
             )
         ],
         "route": Route.TECHNICAL_CLARIFICATION,
     }
 
-    result = agent.run(state)
+    result = await agent.run(state)
 
     assert result["messages"][0].content == "Technical explanation"
