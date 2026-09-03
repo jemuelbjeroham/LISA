@@ -34,4 +34,6 @@ async def test_mcp_client_initializes_session():
             }
         )
 
+        print("\nMCP RESULT:")
+        print(result)
         assert not result.is_error
