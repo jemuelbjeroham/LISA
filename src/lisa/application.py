@@ -1,3 +1,4 @@
+import logging
 from contextlib import AsyncExitStack
 from typing import Self
 
@@ -12,6 +13,7 @@ from lisa.model import create_chat_model
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 
+logger = logging.getLogger(__name__)
 
 class LISA:
     def __init__(self, model: BaseChatModel | None = None):
@@ -21,6 +23,7 @@ class LISA:
         self.exit_stack = AsyncExitStack()
 
     async def __aenter__(self) -> Self:
+        logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
         settings = Settings()
 
         if self.model is None:
@@ -57,6 +60,7 @@ class LISA:
             technical_clarification_agent=technical_clarification_agent
         )
 
+        logger.info("LISA has been initialized")
         return self
 
     async def __aexit__(
@@ -65,4 +69,6 @@ class LISA:
             exc_value,
             traceback,
     ) -> None:
+        logger.info("Application LISA is shutting down")
         await self.exit_stack.aclose()
+        logger.info("Application LISA shutdown complete")
