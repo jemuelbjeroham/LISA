@@ -1,11 +1,15 @@
 import logging
 from contextlib import AsyncExitStack
 from typing import Self
+from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage
 
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.config import Settings
+from lisa.conversation.in_memory import InMemoryConversationStore
+from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
@@ -16,11 +20,38 @@ from lisa.prompts.loader import load_prompt
 logger = logging.getLogger(__name__)
 
 class LISA:
-    def __init__(self, model: BaseChatModel | None = None):
+    def __init__(self, model: BaseChatModel | None = None, conversation_store: ConversationStore | None = None):
         self.model = model
         self.graph = None
         self.mcp_client: MCPClient | None = None
+        self.conversation_store = (
+            conversation_store or InMemoryConversationStore
+        )
         self.exit_stack = AsyncExitStack()
+
+    async def chat(self, conversation_id: UUID, message: str) -> str:
+        state = await self.conversation_store.get(conversation_id)
+
+        if state is None:
+            state = {
+                "messages": [],
+                "route": None,
+            }
+
+        state["messages"].append(
+            HumanMessage(content=message)
+        )
+
+        result = await self.graph.ainvoke(state)
+
+        await self.conversation_store.save(
+            conversation_id,
+            result,
+        )
+
+        response = result["messages"][-1]
+
+        return response.content
 
     async def __aenter__(self) -> Self:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
