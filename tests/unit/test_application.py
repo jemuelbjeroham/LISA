@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -6,6 +6,7 @@ from conversation.test_in_memory import InMemoryConversationStore
 from langchain_core.messages import AIMessage, HumanMessage
 
 from lisa.application import LISA
+from lisa.routing import Route
 
 
 @pytest.mark.anyio
@@ -129,3 +130,73 @@ async def test_chat_maintains_state_across_two_turns():
     assert second_call_state["messages"][0].content == "Hello"
     assert second_call_state["messages"][1].content == "Hi there!"
     assert second_call_state["messages"][2].content == "How are you?"
+
+@pytest.mark.anyio
+async def test_graph_stream_output():
+    async with LISA() as lisa:
+        async for chunk in lisa.graph.astream(
+            {
+                "messages": [HumanMessage(content="How do I troubleshoot BGP?")],
+                "route": None,
+            }
+        ):
+            print("\nSTREAM CHUNK:")
+            print(chunk)
+
+@pytest.mark.anyio
+async def test_model_streams_tokens():
+    async with LISA() as lisa:
+        async for chunk in lisa.model.astream(
+            [HumanMessage(content="Explain what BGP is in one sentence.")]
+        ):
+            print("\nMODEL CHUNK:")
+            print(repr(chunk))
+
+@pytest.mark.anyio
+async def test_stream_chat_yields_chunks_and_persists_response():
+    conversation_id = uuid4()
+    store = InMemoryConversationStore()
+
+    model = AsyncMock()
+
+    lisa = LISA(
+        model=model,
+        conversation_store=store,
+    )
+
+    orchestrator = MagicMock()
+    orchestrator.route.return_value = {
+        "route": Route.TECHNICAL_CLARIFICATION,
+    }
+
+    technical_agent = MagicMock()
+
+    async def stream(state):
+        yield AIMessage(content="Hello")
+        yield AIMessage(content=" there")
+        yield AIMessage(content="!")
+
+    technical_agent.stream = stream
+
+    lisa.orchestrator = orchestrator
+    lisa.technical_clarification_agent = technical_agent
+
+    chunks = []
+
+    async for chunk in lisa.stream_chat(
+        conversation_id=conversation_id,
+        message="Hi",
+    ):
+        chunks.append(chunk)
+
+    assert chunks == [
+        "Hello",
+        " there",
+        "!",
+    ]
+
+    saved_state = await store.get(conversation_id)
+
+    assert saved_state is not None
+    assert saved_state["messages"][0].content == "Hi"
+    assert saved_state["messages"][1].content == "Hello there!"

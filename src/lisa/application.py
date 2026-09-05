@@ -4,7 +4,7 @@ from typing import Self
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.config import Settings
@@ -27,6 +27,8 @@ class LISA:
         self.conversation_store = (
             conversation_store or InMemoryConversationStore()
         )
+        self.orchestrator = None
+        self.technical_clarification_agent = None
         self.exit_stack = AsyncExitStack()
 
     async def chat(self, conversation_id: UUID, message: str) -> str:
@@ -53,6 +55,47 @@ class LISA:
 
         return response.content
 
+    async def stream_chat(self, conversation_id: UUID, message: str):
+        state = await self.conversation_store.get(conversation_id)
+
+        if state is None:
+            state = {
+                "messages": [],
+                "route": None,
+            }
+
+        state["messages"].append(
+            HumanMessage(content=message)
+        )
+
+        route_result = self.orchestrator.route(state)
+        state["route"] = route_result["route"]
+
+        if state["route"].value != "technical_clarification":
+            raise NotImplementedError(
+                f"Streaming is not implemented for route: {state['route']}"
+            )
+
+        response_chunks = []
+
+        async for chunk in self.technical_clarification_agent.stream(state):
+            content = chunk.content
+
+            if content:
+                response_chunks.append(content)
+                yield content
+
+        final_response = "".join(response_chunks)
+
+        state["messages"].append(
+            AIMessage(content=final_response)
+        )
+
+        await self.conversation_store.save(
+            conversation_id,
+            state,
+        )
+
     async def __aenter__(self) -> Self:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
         settings = Settings()
@@ -75,20 +118,20 @@ class LISA:
         routing_prompt = load_prompt("orchestrator/routing_v1.txt")
         technical_prompt = load_prompt("technical_clarification/technical_clarification_v1.txt")
 
-        orchestrator = Orchestrator(
+        self.orchestrator = Orchestrator(
             model = self.model,
             routing_prompt=routing_prompt,
         )
 
-        technical_clarification_agent = TechnicalClarificationAgent(
+        self.technical_clarification_agent = TechnicalClarificationAgent(
             model=self.model,
             retriever=retriever,
             system_prompt=technical_prompt,
         )
 
         self.graph = build_graph(
-            orchestrator=orchestrator,
-            technical_clarification_agent=technical_clarification_agent
+            orchestrator=self.orchestrator,
+            technical_clarification_agent=self.technical_clarification_agent
         )
 
         logger.info("LISA has been initialized")

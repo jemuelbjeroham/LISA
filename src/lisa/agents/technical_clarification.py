@@ -30,3 +30,23 @@ class TechnicalClarificationAgent:
         return {
             "messages": [response]
         }
+
+    async def stream(self, state: LISAState):
+        user_message = state["messages"][-1]
+
+        knowledge = await self.retriever.retrieve(user_message.content)
+        knowledge_context = "\n\n".join(knowledge)
+
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(
+                f"Technical knowledge:\n\n"
+                f"{knowledge_context}\n\n"
+                f"User question:\n\n"
+                f"{user_message.content}"
+            ),
+            *state["messages"],
+        ]
+
+        async for chunk in self.model.astream(messages):
+            yield chunk
