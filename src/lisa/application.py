@@ -25,7 +25,7 @@ class LISA:
         self.graph = None
         self.mcp_client: MCPClient | None = None
         self.conversation_store = (
-            conversation_store or InMemoryConversationStore
+            conversation_store or InMemoryConversationStore()
         )
         self.exit_stack = AsyncExitStack()
 
