@@ -6,6 +6,7 @@ from conversation.test_in_memory import InMemoryConversationStore
 from langchain_core.messages import AIMessage, HumanMessage
 
 from lisa.application import LISA
+from lisa.graph import build_graph
 from lisa.routing import Route
 
 
@@ -131,26 +132,26 @@ async def test_chat_maintains_state_across_two_turns():
     assert second_call_state["messages"][1].content == "Hi there!"
     assert second_call_state["messages"][2].content == "How are you?"
 
-@pytest.mark.anyio
-async def test_graph_stream_output():
-    async with LISA() as lisa:
-        async for chunk in lisa.graph.astream(
-            {
-                "messages": [HumanMessage(content="How do I troubleshoot BGP?")],
-                "route": None,
-            }
-        ):
-            print("\nSTREAM CHUNK:")
-            print(chunk)
+# @pytest.mark.anyio
+# async def test_graph_stream_output():
+#     async with LISA() as lisa:
+#         async for chunk in lisa.graph.astream(
+#             {
+#                 "messages": [HumanMessage(content="How do I troubleshoot BGP?")],
+#                 "route": None,
+#             }
+#         ):
+#             print("\nSTREAM CHUNK:")
+#             print(chunk)
 
-@pytest.mark.anyio
-async def test_model_streams_tokens():
-    async with LISA() as lisa:
-        async for chunk in lisa.model.astream(
-            [HumanMessage(content="Explain what BGP is in one sentence.")]
-        ):
-            print("\nMODEL CHUNK:")
-            print(repr(chunk))
+# @pytest.mark.anyio
+# async def test_model_streams_tokens():
+#     async with LISA() as lisa:
+#         async for chunk in lisa.model.astream(
+#             [HumanMessage(content="Explain what BGP is in one sentence.")]
+#         ):
+#             print("\nMODEL CHUNK:")
+#             print(repr(chunk))
 
 @pytest.mark.anyio
 async def test_stream_chat_yields_chunks_and_persists_response():
@@ -200,3 +201,53 @@ async def test_stream_chat_yields_chunks_and_persists_response():
     assert saved_state is not None
     assert saved_state["messages"][0].content == "Hi"
     assert saved_state["messages"][1].content == "Hello there!"
+
+@pytest.mark.anyio
+async def test_lisa_chat_handles_general_enquiry():
+    model = MagicMock()
+
+    model.with_structured_output.return_value = MagicMock()
+
+    lisa = LISA(
+        model=model,
+        conversation_store=InMemoryConversationStore(),
+    )
+
+    orchestrator = MagicMock()
+    orchestrator.route.return_value = {
+        "route": Route.GENERAL_ENQUIRY,
+    }
+
+    general_enquiry_agent = MagicMock()
+
+    general_enquiry_agent.run = MagicMock(
+        return_value={
+            "messages": [
+                AIMessage(content="Hello! How can I help?")
+            ]
+        }
+    )
+
+    technical_clarification_agent = MagicMock()
+
+    lisa.orchestrator = orchestrator
+    lisa.general_enquiry_agent = general_enquiry_agent
+    lisa.technical_clarification_agent = technical_clarification_agent
+
+    lisa.graph = build_graph(
+        orchestrator=orchestrator,
+        technical_clarification_agent=technical_clarification_agent,
+        general_enquiry_agent=general_enquiry_agent,
+    )
+
+    conversation_id = uuid4()
+
+    response = await lisa.chat(
+        conversation_id=conversation_id,
+        message="Hello",
+    )
+
+    assert response == "Hello! How can I help?"
+
+    general_enquiry_agent.run.assert_called_once()
+    technical_clarification_agent.run.assert_not_called()

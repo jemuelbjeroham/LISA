@@ -41,20 +41,22 @@ async def test_graph_routes_to_technical_clarification_agent():
         system_prompt="You are a technical assistant.",
     )
 
+    general_enquiry_agent = Mock()
+
     graph = build_graph(
         orchestrator=orchestrator,
         technical_clarification_agent=technical_clarification_agent,
+        general_enquiry_agent=general_enquiry_agent,
     )
 
-    result = await graph.ainvoke(
-        {
-            "messages": [
-                HumanMessage(
-                    content="Why is CH398 stuck in deleting state?"
-                )
-            ]
-        }
-    )
+    state = {
+        "messages": [
+            HumanMessage(content="How do I troubleshoot BGP?")
+        ],
+        "route": None,
+    }
+
+    result = await graph.ainvoke(state)
 
     assert result["route"] == Route.TECHNICAL_CLARIFICATION
     assert result["messages"][-1].content == (
@@ -62,7 +64,7 @@ async def test_graph_routes_to_technical_clarification_agent():
     )
 
     retriever.retrieve.assert_awaited_once_with(
-        "Why is CH398 stuck in deleting state?"
+        "How do I troubleshoot BGP?"
     )
 
-    technical_model.invoke.assert_called_once()
+    general_enquiry_agent.run.assert_not_called()

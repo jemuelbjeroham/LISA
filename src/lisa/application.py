@@ -6,6 +6,7 @@ from uuid import UUID
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
+from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.config import Settings
 from lisa.conversation.in_memory import InMemoryConversationStore
@@ -29,6 +30,7 @@ class LISA:
         )
         self.orchestrator = None
         self.technical_clarification_agent = None
+        self.general_enquiry_agent = None
         self.exit_stack = AsyncExitStack()
 
     async def chat(self, conversation_id: UUID, message: str) -> str:
@@ -117,6 +119,7 @@ class LISA:
 
         routing_prompt = load_prompt("orchestrator/routing_v1.txt")
         technical_prompt = load_prompt("technical_clarification/technical_clarification_v1.txt")
+        general_enquiry_prompt = load_prompt("general_enquiry/general_enquiry_v1.txt")
 
         self.orchestrator = Orchestrator(
             model = self.model,
@@ -129,9 +132,15 @@ class LISA:
             system_prompt=technical_prompt,
         )
 
+        self.general_enquiry_agent = GeneralEnquiry(
+            model=self.model,
+            system_prompt=general_enquiry_prompt,
+        )
+
         self.graph = build_graph(
             orchestrator=self.orchestrator,
-            technical_clarification_agent=self.technical_clarification_agent
+            technical_clarification_agent=self.technical_clarification_agent,
+            general_enquiry_agent=self.general_enquiry_agent,
         )
 
         logger.info("LISA has been initialized")
