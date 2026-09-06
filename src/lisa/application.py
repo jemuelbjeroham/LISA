@@ -73,10 +73,10 @@ class LISA:
         route_result = self.orchestrator.route(state)
         state["route"] = route_result["route"]
 
-        if state["route"].value != "technical_clarification":
-            raise NotImplementedError(
-                f"Streaming is not implemented for route: {state['route']}"
-            )
+        # if state["route"].value != "technical_clarification":
+        #     raise NotImplementedError(
+        #         f"Streaming is not implemented for route: {state['route']}"
+        #     )
 
         response_chunks = []
 
