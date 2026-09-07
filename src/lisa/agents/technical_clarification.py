@@ -1,50 +1,61 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 
+from lisa.agents.base import BaseAgent
 from lisa.knowledge.protocol import KnowledgeRetriever
 from lisa.state import LISAState
 
 
-class TechnicalClarificationAgent:
-    def __init__(self, model: BaseChatModel, retriever: KnowledgeRetriever, system_prompt: str):
-        self.model = model
+class TechnicalClarificationAgent(BaseAgent):
+    def __init__(self, model: BaseChatModel, system_prompt: str, retriever: KnowledgeRetriever):
+
+        super().__init__(model=model, system_prompt=system_prompt)
         self.retriever = retriever
-        self.system_prompt = system_prompt
 
-    async def run(self, state: LISAState):
-        user_message = state["messages"][-1]
+    # async def run(self, state: LISAState):
+    #     user_message = state["messages"][-1]
 
-        knowledge = await self.retriever.retrieve(user_message.content)
-        knowledge_context = "\n\n".join(knowledge)
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(
-                    f"Technical knowledge:\n\n"
-                    f"{knowledge_context}\n\n"
-                    f"User question:\n\n"
-                    f"{user_message.content}"
-            ),
-            *state["messages"]
-        ]
-        response = self.model.invoke(messages)
-        return {
-            "messages": [response]
-        }
+    #     knowledge = await self.retriever.retrieve(user_message.content)
+
+    #     state["knowledge_context"] = knowledge
+    #     knowledge_context = "\n\n".join(knowledge)
+
+    #     system_message = SystemMessage(
+    #         content=(
+    #             f"{self.system_prompt}\n\n"
+    #             f"Relevant technical knowledge:\n\n"
+    #             f"{knowledge_context}"
+    #         )
+    #     )
+    #     messages = [
+    #         system_message,
+    #         *state["messages"],
+    #     ]
+
+    #     response = self.model.invoke(messages)
+
+    #     return {
+    #         "messages": [response],
+    #         "knowledge_context": knowledge,
+    #     }
 
     async def stream(self, state: LISAState):
         user_message = state["messages"][-1]
 
         knowledge = await self.retriever.retrieve(user_message.content)
-        knowledge_context = "\n\n".join(knowledge)
+        state["knowledge_context"] = knowledge
+        knowledge_context = "\n\n".join(state["knowledge_context"])
+
+        system_message = SystemMessage(
+            content=(
+                f"{self.system_prompt}\n\n"
+                f"Relevant technical knowledge:\n\n"
+                f"{knowledge_context}"
+            )
+        )
 
         messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(
-                f"Technical knowledge:\n\n"
-                f"{knowledge_context}\n\n"
-                f"User question:\n\n"
-                f"{user_message.content}"
-            ),
+            system_message,
             *state["messages"],
         ]
 

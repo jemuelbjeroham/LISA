@@ -18,7 +18,7 @@ def build_graph(
     builder = StateGraph(LISAState)
 
     builder.add_node("orchestrator", orchestrator.route)
-    builder.add_node("technical_clarification", technical_clarification_agent.run)
+    builder.add_node("technical_clarification", technical_clarification_agent.stream)
     builder.add_node("general_enquiry", general_enquiry_agent.run)
 
     builder.add_edge(START, "orchestrator")

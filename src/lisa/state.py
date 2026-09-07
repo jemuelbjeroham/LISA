@@ -8,4 +8,4 @@ from lisa.routing import Route
 class LISAState(TypedDict):
     messages: Annotated[list, add_messages]
     route: Route | None
-
+    knowledge_context: list[str]
