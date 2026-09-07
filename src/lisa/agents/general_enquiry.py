@@ -18,3 +18,13 @@ class GeneralEnquiry(BaseAgent):
         return {
             "messages": [response]
         }
+
+    async def stream(self, state: LISAState):
+
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            *state["messages"],
+        ]
+
+        async for chunk in self.model.astream(messages):
+            yield chunk
