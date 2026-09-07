@@ -12,32 +12,32 @@ class TechnicalClarificationAgent(BaseAgent):
         super().__init__(model=model, system_prompt=system_prompt)
         self.retriever = retriever
 
-    # async def run(self, state: LISAState):
-    #     user_message = state["messages"][-1]
+    async def run(self, state: LISAState):
+        user_message = state["messages"][-1]
 
-    #     knowledge = await self.retriever.retrieve(user_message.content)
+        knowledge = await self.retriever.retrieve(user_message.content)
 
-    #     state["knowledge_context"] = knowledge
-    #     knowledge_context = "\n\n".join(knowledge)
+        state["knowledge_context"] = knowledge
+        knowledge_context = "\n\n".join(knowledge)
 
-    #     system_message = SystemMessage(
-    #         content=(
-    #             f"{self.system_prompt}\n\n"
-    #             f"Relevant technical knowledge:\n\n"
-    #             f"{knowledge_context}"
-    #         )
-    #     )
-    #     messages = [
-    #         system_message,
-    #         *state["messages"],
-    #     ]
+        system_message = SystemMessage(
+            content=(
+                f"{self.system_prompt}\n\n"
+                f"Relevant technical knowledge:\n\n"
+                f"{knowledge_context}"
+            )
+        )
+        messages = [
+            system_message,
+            *state["messages"],
+        ]
 
-    #     response = self.model.invoke(messages)
+        response = self.model.invoke(messages)
 
-    #     return {
-    #         "messages": [response],
-    #         "knowledge_context": knowledge,
-    #     }
+        return {
+            "messages": [response],
+            "knowledge_context": knowledge,
+        }
 
     async def stream(self, state: LISAState):
         user_message = state["messages"][-1]
