@@ -1,5 +1,5 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
 from lisa.agents.base import BaseAgent
 from lisa.knowledge.protocol import KnowledgeRetriever
@@ -32,10 +32,19 @@ class TechnicalClarificationAgent(BaseAgent):
             *state["messages"],
         ]
 
-        response = self.model.invoke(messages)
+        response_chunks = []
+
+        async for chunk in self.model.astream(messages):
+            response_chunks.append(chunk)
+
+        final_response = "".join(
+            chunk.content
+            for chunk in response_chunks
+            if chunk.content
+        )
 
         return {
-            "messages": [response],
+            "messages": [AIMessage(content=final_response)],
             "knowledge_context": knowledge,
         }
 

@@ -4,7 +4,7 @@ from typing import Self
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
 from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
@@ -70,33 +70,26 @@ class LISA:
             HumanMessage(content=message)
         )
 
-        route_result = self.orchestrator.route(state)
-        state["route"] = route_result["route"]
+        async for message_chunk, metadata in self.graph.astream(state, stream_mode="messages"):
+            yield message_chunk.content
 
-        # if state["route"].value != "technical_clarification":
-        #     raise NotImplementedError(
-        #         f"Streaming is not implemented for route: {state['route']}"
-        #     )
+        # # async for chunk in self.technical_clarification_agent.stream(state):
+        # #     content = chunk.content
 
-        response_chunks = []
+        # #     if content:
+        # #         response_chunks.append(content)
+        # #         yield content
 
-        async for chunk in self.technical_clarification_agent.stream(state):
-            content = chunk.content
+        # final_response = "".join(response_chunks)
 
-            if content:
-                response_chunks.append(content)
-                yield content
+        # state["messages"].append(
+        #     AIMessage(content=final_response)
+        # )
 
-        final_response = "".join(response_chunks)
-
-        state["messages"].append(
-            AIMessage(content=final_response)
-        )
-
-        await self.conversation_store.save(
-            conversation_id,
-            state,
-        )
+        # await self.conversation_store.save(
+        #     conversation_id,
+        #     state,
+        # )
 
     async def __aenter__(self) -> Self:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")

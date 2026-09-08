@@ -1,10 +1,12 @@
+import asyncio
+
+from langchain_core.messages import HumanMessage
+
 from lisa.config import Settings
 from lisa.model import create_chat_model
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 from lisa.state import LISAState
-from langchain_core.messages import HumanMessage
-import asyncio
 
 
 async def main():
