@@ -14,15 +14,16 @@ from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
-from lisa.model import create_chat_model
+from lisa.model import create_chat_model, create_router_model
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 
 logger = logging.getLogger(__name__)
 
 class LISA:
-    def __init__(self, model: BaseChatModel | None = None, conversation_store: ConversationStore | None = None):
+    def __init__(self, model: BaseChatModel | None = None, router_model: BaseChatModel | None = None, conversation_store: ConversationStore | None = None):
         self.model = model
+        self.router_model = router_model
         self.graph = None
         self.mcp_client: MCPClient | None = None
         self.conversation_store = (
@@ -40,6 +41,7 @@ class LISA:
             state = {
                 "messages": [],
                 "route": None,
+                "knowledge_context": [],
             }
 
         state["messages"].append(
@@ -64,6 +66,7 @@ class LISA:
             state = {
                 "messages": [],
                 "route": None,
+                "knowledge_context": [],
             }
 
         state["messages"].append(
@@ -98,6 +101,9 @@ class LISA:
         if self.model is None:
             self.model = create_chat_model(settings)
 
+        if self.router_model is None:
+            self.router_model = create_router_model(settings)
+
         self.mcp_client = await self.exit_stack.enter_async_context(
             MCPClient(
                 command=settings.mcp_server_command,
@@ -115,7 +121,7 @@ class LISA:
         general_enquiry_prompt = load_prompt("general_enquiry/general_enquiry_v1.txt")
 
         self.orchestrator = Orchestrator(
-            model = self.model,
+            model=self.router_model,
             routing_prompt=routing_prompt,
         )
 
