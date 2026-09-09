@@ -41,6 +41,7 @@ class LISA:
             state = {
                 "messages": [],
                 "route": None,
+                "active_route": None,
                 "knowledge_context": [],
             }
 
@@ -61,11 +62,17 @@ class LISA:
 
     async def stream_chat(self, conversation_id: UUID, message: str):
         state = await self.conversation_store.get(conversation_id)
+        logger.info(
+            "Loaded conversation state: active_route=%s, messages=%d",
+            state.get("active_route") if state else None,
+            len(state["messages"]) if state else 0,
+        )
 
         if state is None:
             state = {
                 "messages": [],
                 "route": None,
+                "active_route": None,
                 "knowledge_context": [],
             }
 
@@ -73,8 +80,24 @@ class LISA:
             HumanMessage(content=message)
         )
 
-        async for message_chunk, metadata in self.graph.astream(state, stream_mode="messages"):
-            yield message_chunk.content
+        final_state = None
+
+        async for mode, chunk in self.graph.astream(state, stream_mode=["messages", "values"]):
+
+            if mode == "messages":
+                message_chunk, metadata = chunk
+
+                if message_chunk.content:
+                    yield message_chunk.content
+
+            elif mode == "values":
+                final_state = chunk
+
+        if final_state is not None:
+            await self.conversation_store.save(
+                conversation_id,
+                final_state,
+            )
 
         # # async for chunk in self.technical_clarification_agent.stream(state):
         # #     content = chunk.content

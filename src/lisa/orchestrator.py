@@ -24,7 +24,8 @@ class Orchestrator:
             logger.info("LLM classified the intent and chose the route: %s", decision.route)
 
             return {
-                "route": decision.route
+                "route": decision.route,
+                "active_route": decision.route,
             }
 
         except Exception:
