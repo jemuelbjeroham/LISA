@@ -16,13 +16,14 @@ response = client.chat.completions.create(
             "content": "Explain what an MLP is in the context of Transformers.",
         }
     ],
-    temperature=0,
+    temperature=1,
+    top_p=0.95,
     max_tokens=4096,
     extra_body={
         "chat_template_kwargs": {
             "enable_thinking": True,
         },
-        "reasoning_budget": 2048,
+        "reasoning_budget": 16384,
     },
 )
 
