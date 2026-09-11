@@ -10,3 +10,4 @@ class LISAState(TypedDict):
     route: Route | None
     active_route: Route | None
     knowledge_context: list[str]
+    enable_thinking: bool

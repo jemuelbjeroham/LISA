@@ -14,15 +14,16 @@ from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
-from lisa.model import create_chat_model, create_router_model
+from lisa.model import create_chat_model, create_thinking_chat_model, create_router_model
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 
 logger = logging.getLogger(__name__)
 
 class LISA:
-    def __init__(self, model: BaseChatModel | None = None, router_model: BaseChatModel | None = None, conversation_store: ConversationStore | None = None):
+    def __init__(self, model: BaseChatModel | None = None, thinking_model: BaseChatModel | None = None, router_model: BaseChatModel | None = None, conversation_store: ConversationStore | None = None):
         self.model = model
+        self.thinking_model = thinking_model
         self.router_model = router_model
         self.graph = None
         self.mcp_client: MCPClient | None = None
@@ -34,7 +35,7 @@ class LISA:
         self.general_enquiry_agent = None
         self.exit_stack = AsyncExitStack()
 
-    async def chat(self, conversation_id: UUID, message: str) -> str:
+    async def chat(self, conversation_id: UUID, message: str, enable_thinking: bool = False) -> str:
         state = await self.conversation_store.get(conversation_id)
 
         if state is None:
@@ -43,7 +44,10 @@ class LISA:
                 "route": None,
                 "active_route": None,
                 "knowledge_context": [],
+                "enable_thinking": enable_thinking,
             }
+        else:
+            state["enable_thinking"] = enable_thinking
 
         state["messages"].append(
             HumanMessage(content=message)
@@ -60,7 +64,7 @@ class LISA:
 
         return response.content
 
-    async def stream_chat(self, conversation_id: UUID, message: str):
+    async def stream_chat(self, conversation_id: UUID, message: str, enable_thinking: bool = False):
         state = await self.conversation_store.get(conversation_id)
         logger.info(
             "Loaded conversation state: active_route=%s, messages=%d",
@@ -74,7 +78,10 @@ class LISA:
                 "route": None,
                 "active_route": None,
                 "knowledge_context": [],
+                "enable_thinking": enable_thinking,
             }
+        else:
+            state["enable_thinking"] = enable_thinking
 
         state["messages"].append(
             HumanMessage(content=message)
@@ -87,6 +94,12 @@ class LISA:
             if mode == "messages":
                 message_chunk, metadata = chunk
 
+                logger.info(
+                    "LLM chunk: content=%r reasoning=%r",
+                    message_chunk.content,
+                    message_chunk.additional_kwargs.get("reasoning_content"),
+                )
+                
                 if message_chunk.content:
                     yield message_chunk.content
 
@@ -124,6 +137,9 @@ class LISA:
         if self.model is None:
             self.model = create_chat_model(settings)
 
+        if self.thinking_model is None:
+            self.thinking_model = create_thinking_chat_model(settings)
+
         if self.router_model is None:
             self.router_model = create_router_model(settings)
 
@@ -156,6 +172,7 @@ class LISA:
 
         self.general_enquiry_agent = GeneralEnquiry(
             model=self.model,
+            thinking_model=self.thinking_model,
             system_prompt=general_enquiry_prompt,
         )
 
