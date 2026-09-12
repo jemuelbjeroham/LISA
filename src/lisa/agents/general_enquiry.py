@@ -1,8 +1,11 @@
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, SystemMessage
+from langgraph.config import get_stream_writer
 
 from lisa.agents.base import BaseAgent
 from lisa.state import LISAState
+from lisa.streaming.events import StreamEvent
 
 
 class GeneralEnquiry(BaseAgent):
@@ -27,17 +30,39 @@ class GeneralEnquiry(BaseAgent):
             *state["messages"],
         ]
 
+        writer = get_stream_writer()
+
         response_chunks = []
         async for chunk in model.astream(messages):
-            response_chunks.append(chunk)
 
-        final_response = "".join(
-            chunk.content
-            for chunk in response_chunks
-            if chunk.content
-        )
+            reasoning = chunk.additional_kwargs.get(
+                "reasoning_content"
+            )
+
+            if reasoning:
+                writer(
+                    StreamEvent(
+                        type="reasoning",
+                        content=reasoning,
+                    )
+                )
+
+            if chunk.content:
+                writer(
+                    StreamEvent(
+                        type="content",
+                        content=chunk.content,
+                    )
+                )
+
+                response_chunks.append(chunk.content)
+
+            final_response = "".join(response_chunks)
+
         return {
-            "messages": [AIMessage(content=final_response)]
+            "messages": [
+                AIMessage(content=final_response)
+            ]
         }
 
 

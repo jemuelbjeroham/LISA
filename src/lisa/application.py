@@ -14,9 +14,14 @@ from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
-from lisa.model import create_chat_model, create_thinking_chat_model, create_router_model
+from lisa.model import (
+    create_chat_model,
+    create_router_model,
+    create_thinking_chat_model,
+)
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
+from lisa.streaming.events import StreamEvent
 
 logger = logging.getLogger(__name__)
 
@@ -89,19 +94,24 @@ class LISA:
 
         final_state = None
 
-        async for mode, chunk in self.graph.astream(state, stream_mode=["messages", "values"]):
+        async for mode, chunk in self.graph.astream(state, stream_mode=["custom", "values"]):
 
-            if mode == "messages":
-                message_chunk, metadata = chunk
+            if mode == "custom":
+
+                if not isinstance(chunk, StreamEvent):
+                    logger.warning(
+                        "Received unexpected custom stream event: %r",
+                        chunk,
+                    )
+                    continue
 
                 logger.info(
-                    "LLM chunk: content=%r reasoning=%r",
-                    message_chunk.content,
-                    message_chunk.additional_kwargs.get("reasoning_content"),
+                    "Stream Event: type=%s content=%r",
+                    chunk.type,
+                    chunk.content,
                 )
-                
-                if message_chunk.content:
-                    yield message_chunk.content
+
+                yield chunk
 
             elif mode == "values":
                 final_state = chunk

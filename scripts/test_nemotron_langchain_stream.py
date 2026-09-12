@@ -4,7 +4,6 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
-
 OUTPUT_FILE = Path("nemotron_langchain_stream.txt")
 
 
