@@ -64,20 +64,3 @@ class GeneralEnquiry(BaseAgent):
                 AIMessage(content=final_response)
             ]
         }
-
-
-    async def stream(self, state: LISAState):
-
-        model = (
-            self.thinking_model
-            if state["enable_thinking"]
-            else self.model
-        )
-
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            *state["messages"],
-        ]
-
-        async for chunk in model.astream(messages):
-            yield chunk
