@@ -1,7 +1,6 @@
 from lisa.config import Settings
 from lisa.model import create_thinking_chat_model
 
-
 settings = Settings()
 
 model = create_thinking_chat_model(settings)

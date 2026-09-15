@@ -1,4 +1,6 @@
 
+import logging
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.config import get_stream_writer
@@ -6,6 +8,8 @@ from langgraph.config import get_stream_writer
 from lisa.agents.base import BaseAgent
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
+
+logger = logging.getLogger(__name__)
 
 
 class GeneralEnquiry(BaseAgent):
@@ -35,6 +39,8 @@ class GeneralEnquiry(BaseAgent):
         response_chunks = []
         async for chunk in model.astream(messages):
 
+            logger.info("RAW MODEL CHUNK: %r", chunk)
+
             reasoning = chunk.additional_kwargs.get(
                 "reasoning_content"
             )
@@ -57,7 +63,7 @@ class GeneralEnquiry(BaseAgent):
 
                 response_chunks.append(chunk.content)
 
-            final_response = "".join(response_chunks)
+        final_response = "".join(response_chunks)
 
         return {
             "messages": [
