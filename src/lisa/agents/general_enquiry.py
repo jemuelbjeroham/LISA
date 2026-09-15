@@ -39,8 +39,6 @@ class GeneralEnquiry(BaseAgent):
         response_chunks = []
         async for chunk in model.astream(messages):
 
-            logger.info("RAW MODEL CHUNK: %r", chunk)
-
             reasoning = chunk.additional_kwargs.get(
                 "reasoning_content"
             )
