@@ -7,7 +7,14 @@ from lisa.config import Settings
 
 def create_chat_model(settings: Settings) -> BaseChatModel:
     if settings.model_provider == "nvidia":
-        return ChatNVIDIA(model=settings.model_name)
+        return ChatNVIDIA(
+            model=settings.model_name,
+            model_kwargs={
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                },
+            },
+        )
     raise ValueError(f"Unsupported Model Provider: {settings.model_provider}")
 
 
