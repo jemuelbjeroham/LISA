@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 from pydantic import BaseModel
-
+from typing import Literal
 
 class Route(StrEnum):
     GENERAL_ENQUIRY = "general_enquiry"
@@ -27,4 +27,5 @@ class RoutingPolicy:
 
         return RoutingAction.ROUTE
 
-    
+class AgentDecision(BaseModel):
+    action: Literal["respond", "handoff"]
