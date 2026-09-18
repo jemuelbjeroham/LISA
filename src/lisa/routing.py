@@ -1,7 +1,8 @@
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel
-from typing import Literal
+
 
 class Route(StrEnum):
     GENERAL_ENQUIRY = "general_enquiry"
