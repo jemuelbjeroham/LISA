@@ -8,6 +8,23 @@ class Route(StrEnum):
     ISSUE_REPORTING = "issue_reporting"
     TECHNICAL_CLARIFICATION = "technical_clarification"
 
+class RoutingAction(StrEnum):
+    CONTINUE = "continue"
+    ROUTE = "route"
+
 class RoutingDecision(BaseModel):
     route: Route
+
+class RoutingPolicy:
+
+    def decide(
+            self,
+            active_route: Route | None,
+    ) -> RoutingAction:
+
+        if active_route is not None:
+            return RoutingAction.CONTINUE
+
+        return RoutingAction.ROUTE
+
     

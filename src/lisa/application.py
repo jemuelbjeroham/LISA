@@ -21,6 +21,7 @@ from lisa.model import (
 )
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
+from lisa.routing import RoutingPolicy
 from lisa.streaming.events import StreamEvent
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class LISA:
         self.technical_clarification_agent = None
         self.general_enquiry_agent = None
         self.exit_stack = AsyncExitStack()
+        self.routing_policy = None
 
     async def chat(self, conversation_id: UUID, message: str, enable_thinking: bool = False) -> str:
         state = await self.conversation_store.get(conversation_id)
@@ -186,10 +188,13 @@ class LISA:
             system_prompt=general_enquiry_prompt,
         )
 
+        self.routing_policy = RoutingPolicy()
+
         self.graph = build_graph(
             orchestrator=self.orchestrator,
             technical_clarification_agent=self.technical_clarification_agent,
             general_enquiry_agent=self.general_enquiry_agent,
+            routing_policy=self.routing_policy,
         )
 
         logger.info("LISA has been initialized")
