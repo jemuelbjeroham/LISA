@@ -1,5 +1,4 @@
 from enum import StrEnum
-from typing import Literal
 
 from pydantic import BaseModel
 
@@ -28,5 +27,5 @@ class RoutingPolicy:
 
         return RoutingAction.ROUTE
 
-class AgentDecision(BaseModel):
-    action: Literal["respond", "handoff"]
+# class AgentDecision(BaseModel):
+#     action: Literal["respond", "handoff"]

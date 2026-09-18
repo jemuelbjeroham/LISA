@@ -51,6 +51,14 @@ class GeneralEnquiry(BaseAgent):
                     )
                 )
 
+            if chunk.tool_calls:
+                for tool_call in chunk.tool_calls:
+                    if tool_call["name"] == "handoff":
+                        logger.info(
+                            "Agent requested handoff: %s",
+                            tool_call["args"],
+                        )
+                        
             if chunk.content:
                 writer(
                     StreamEvent(

@@ -23,6 +23,11 @@ def route_entry(state: LISAState, routing_policy: RoutingPolicy) -> str:
 def route_from_state(state: LISAState) -> Route:
     return state["route"]
 
+def route_from_agent(state: LISAState) -> str:
+    if state["agent_handoff"] is not None:
+        return "orchestrator"
+    return "end"
+
 def build_graph(
         orchestrator: Orchestrator,
         technical_clarification_agent: TechnicalClarificationAgent,
@@ -51,7 +56,24 @@ def build_graph(
                                       Route.GENERAL_ENQUIRY: "general_enquiry"
                                   },
                                   )
-    builder.add_edge("technical_clarification", END)
-    builder.add_edge("general_enquiry", END)
+
+    builder.add_conditional_edges(
+        "technical_clarification",
+        route_from_agent,
+        {
+            "orchestrator": "orchestrator",
+            "end": END,
+        }
+    )
+    builder.add_conditional_edges(
+        "general_enquiry",
+        route_from_agent,
+        {
+            "orchestrator": "orchestrator",
+            "end": END,
+        }
+    )
+    # builder.add_edge("technical_clarification", END)
+    # builder.add_edge("general_enquiry", END)
 
     return builder.compile()
