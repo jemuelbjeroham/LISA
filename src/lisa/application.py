@@ -26,6 +26,7 @@ from lisa.streaming.events import StreamEvent
 
 logger = logging.getLogger(__name__)
 
+
 class LISA:
     def __init__(self, model: BaseChatModel | None = None, thinking_model: BaseChatModel | None = None, router_model: BaseChatModel | None = None, conversation_store: ConversationStore | None = None):
         self.model = model
@@ -41,9 +42,28 @@ class LISA:
         self.general_enquiry_agent = None
         self.exit_stack = AsyncExitStack()
         self.routing_policy = None
+        logger.debug(
+            "LISA instance created: custom_model=%s, custom_thinking_model=%s, "
+            "custom_router_model=%s, custom_conversation_store=%s",
+            model is not None,
+            thinking_model is not None,
+            router_model is not None,
+            conversation_store is not None,
+        )
 
     async def chat(self, conversation_id: UUID, message: str, enable_thinking: bool = False) -> str:
+        logger.info(
+            "Starting chat request: conversation_id=%s, thinking_enabled=%s",
+            conversation_id,
+            enable_thinking,
+        )
         state = await self.conversation_store.get(conversation_id)
+        logger.debug(
+            "Loaded conversation state: conversation_id=%s, exists=%s, messages=%d",
+            conversation_id,
+            state is not None,
+            len(state["messages"]) if state else 0,
+        )
 
         if state is None:
             state = {
@@ -60,21 +80,51 @@ class LISA:
             HumanMessage(content=message)
         )
 
-        result = await self.graph.ainvoke(state)
-
-        await self.conversation_store.save(
+        logger.debug(
+            "Invoking conversation graph: conversation_id=%s, messages=%d",
             conversation_id,
-            result,
+            len(state["messages"]),
         )
+        try:
+            result = await self.graph.ainvoke(state)
+        except Exception:
+            logger.exception(
+                "Conversation graph failed: conversation_id=%s",
+                conversation_id,
+            )
+            raise
+
+        try:
+            await self.conversation_store.save(
+                conversation_id,
+                result,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist chat result: conversation_id=%s",
+                conversation_id,
+            )
+            raise
 
         response = result["messages"][-1]
+        logger.info(
+            "Completed chat request: conversation_id=%s, response_type=%s",
+            conversation_id,
+            type(response).__name__,
+        )
 
         return response.content
 
     async def stream_chat(self, conversation_id: UUID, message: str, enable_thinking: bool = False):
+        logger.info(
+            "Starting streaming chat request: conversation_id=%s, thinking_enabled=%s",
+            conversation_id,
+            enable_thinking,
+        )
         state = await self.conversation_store.get(conversation_id)
         logger.info(
-            "Loaded conversation state: active_route=%s, messages=%d",
+            "Loaded conversation state: conversation_id=%s, active_route=%s, messages=%d",
+            conversation_id,
             state.get("active_route") if state else None,
             len(state["messages"]) if state else 0,
         )
@@ -95,6 +145,7 @@ class LISA:
         )
 
         final_state = None
+        event_count = 0
 
         async for mode, chunk in self.graph.astream(state, stream_mode=["custom", "values"]):
 
@@ -102,26 +153,45 @@ class LISA:
 
                 if not isinstance(chunk, StreamEvent):
                     logger.warning(
-                        "Received unexpected custom stream event: %r",
-                        chunk,
+                        "Received unexpected custom stream event: type=%s",
+                        type(chunk).__name__,
                     )
                     continue
 
                 logger.info(
-                    "Stream Event: type=%s content=%r",
+                    "Received stream event: conversation_id=%s, type=%s",
+                    conversation_id,
                     chunk.type,
-                    chunk.content,
                 )
 
+                event_count += 1
                 yield chunk
 
             elif mode == "values":
                 final_state = chunk
 
         if final_state is not None:
-            await self.conversation_store.save(
+            try:
+                await self.conversation_store.save(
+                    conversation_id,
+                    final_state,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist streaming result: conversation_id=%s",
+                    conversation_id,
+                )
+                raise
+            logger.info(
+                "Completed streaming chat request: conversation_id=%s, events=%d",
                 conversation_id,
-                final_state,
+                event_count,
+            )
+        else:
+            logger.warning(
+                "Streaming chat completed without a final state: conversation_id=%s, events=%d",
+                conversation_id,
+                event_count,
             )
 
         # # async for chunk in self.technical_clarification_agent.stream(state):
@@ -145,6 +215,13 @@ class LISA:
     async def __aenter__(self) -> Self:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
         settings = Settings()
+        logger.debug(
+            "Loaded application settings: model_provider=%s, router_model_provider=%s, "
+            "mcp_server_command=%s",
+            settings.model_provider,
+            settings.router_model_provider,
+            settings.mcp_server_command,
+        )
 
         if self.model is None:
             self.model = create_chat_model(settings)
@@ -197,7 +274,12 @@ class LISA:
             routing_policy=self.routing_policy,
         )
 
-        logger.info("LISA has been initialized")
+        logger.info(
+            "LISA has been initialized: model=%s, thinking_model=%s, router_model=%s",
+            type(self.model).__name__,
+            type(self.thinking_model).__name__,
+            type(self.router_model).__name__,
+        )
         return self
 
     async def __aexit__(
@@ -206,6 +288,13 @@ class LISA:
             exc_value,
             traceback,
     ) -> None:
-        logger.info("Application LISA is shutting down")
-        await self.exit_stack.aclose()
+        logger.info(
+            "Application LISA is shutting down: exception_type=%s",
+            exc_type.__name__ if exc_type else None,
+        )
+        try:
+            await self.exit_stack.aclose()
+        except Exception:
+            logger.exception("Application LISA shutdown failed")
+            raise
         logger.info("Application LISA shutdown complete")
