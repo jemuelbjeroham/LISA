@@ -37,6 +37,8 @@ class GeneralEnquiry(BaseAgent):
         writer = get_stream_writer()
 
         response_chunks = []
+        logger.info("GeneralEnquiry model type=%s", type(model))
+        logger.info("GeneralEnquiry model repr=%r", model)
         async for chunk in model.astream(messages):
 
             reasoning = chunk.additional_kwargs.get(
@@ -58,7 +60,7 @@ class GeneralEnquiry(BaseAgent):
                             "Agent requested handoff: %s",
                             tool_call["args"],
                         )
-                        
+
             if chunk.content:
                 writer(
                     StreamEvent(

@@ -135,6 +135,7 @@ class LISA:
                 "messages": [],
                 "route": None,
                 "active_route": None,
+                "agent_handoff": None,
                 "knowledge_context": [],
                 "enable_thinking": enable_thinking,
             }
