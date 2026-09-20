@@ -18,6 +18,26 @@ def create_chat_model(settings: Settings) -> BaseChatModel:
     raise ValueError(f"Unsupported Model Provider: {settings.model_provider}")
 
 
+def create_fallback_model(settings: Settings) -> BaseChatModel:
+    if settings.fallback_model_provider == "nvidia":
+        return ChatNVIDIA(
+            model=settings.fallback_model_name,
+            model_kwargs={
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                }
+            },
+        )
+    if settings.fallback_model_provider == "openai":
+        return ChatOpenAI(
+            model=settings.fallback_model_name,
+            api_key=settings.openai_token,
+        )
+    raise ValueError(
+        f"Unsupported Fallback Model Provider: "
+        f"{settings.fallback_model_provider}"
+    )
+
 def create_thinking_chat_model(settings: Settings) -> BaseChatModel:
     if settings.model_provider == "nvidia":
         return ChatNVIDIA(
