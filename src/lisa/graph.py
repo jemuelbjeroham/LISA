@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 
 from langgraph.graph import END, START, StateGraph
@@ -8,6 +9,7 @@ from lisa.orchestrator import Orchestrator
 from lisa.routing import Route, RoutingAction, RoutingPolicy
 from lisa.state import LISAState
 
+logger = logging.getLogger(__name__)
 
 def route_entry(state: LISAState, routing_policy: RoutingPolicy) -> str:
 
@@ -24,6 +26,12 @@ def route_from_state(state: LISAState) -> Route:
     return state["route"]
 
 def route_from_agent(state: LISAState) -> str:
+    logger.info(
+        "ROUTE FROM AGENT: agent_handoff=%s route=%s active_route=%s",
+        state.get("agent_handoff"),
+        state.get("route"),
+        state.get("active_route"),
+    )
     if state["agent_handoff"] is not None:
         return "orchestrator"
     return "end"

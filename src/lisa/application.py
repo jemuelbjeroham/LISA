@@ -16,6 +16,7 @@ from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
 from lisa.model import (
     create_chat_model,
+    create_fallback_model,
     create_router_model,
     create_thinking_chat_model,
 )
@@ -28,8 +29,15 @@ logger = logging.getLogger(__name__)
 
 
 class LISA:
-    def __init__(self, model: BaseChatModel | None = None, thinking_model: BaseChatModel | None = None, router_model: BaseChatModel | None = None, conversation_store: ConversationStore | None = None):
+
+    def __init__(self, model: BaseChatModel | None = None, 
+                 thinking_model: BaseChatModel | None = None, 
+                 router_model: BaseChatModel | None = None,
+                 fallback_model: BaseChatModel | None = None,
+                 conversation_store: ConversationStore | None = None
+                ):
         self.model = model
+        self.fallback_model = fallback_model
         self.thinking_model = thinking_model
         self.router_model = router_model
         self.graph = None
@@ -44,10 +52,12 @@ class LISA:
         self.routing_policy = None
         logger.debug(
             "LISA instance created: custom_model=%s, custom_thinking_model=%s, "
-            "custom_router_model=%s, custom_conversation_store=%s",
+            "custom_router_model=%s, custom_fallback_model=%s, "
+            "custom_conversation_store=%s",
             model is not None,
             thinking_model is not None,
             router_model is not None,
+            fallback_model is not None,
             conversation_store is not None,
         )
 
@@ -234,6 +244,22 @@ class LISA:
         if self.router_model is None:
             self.router_model = create_router_model(settings)
 
+        if self.fallback_model is None:
+            logger.info(
+                "Initializing fallback model: provider=%s, model_name=%s",
+                settings.fallback_model_provider,
+                settings.fallback_model_name,
+            )
+            try:
+                self.fallback_model = create_fallback_model(settings)
+                logger.info(
+                    "Fallback model initialized: %s",
+                    type(self.fallback_model).__name__,
+                )
+            except Exception:
+                logger.exception("Failed to initialize fallback model")
+                raise
+
         self.mcp_client = await self.exit_stack.enter_async_context(
             MCPClient(
                 command=settings.mcp_server_command,
@@ -277,10 +303,12 @@ class LISA:
         )
 
         logger.info(
-            "LISA has been initialized: model=%s, thinking_model=%s, router_model=%s",
+            "LISA has been initialized: model=%s, thinking_model=%s, router_model=%s, "
+            "fallback_model=%s",
             type(self.model).__name__,
             type(self.thinking_model).__name__,
             type(self.router_model).__name__,
+            type(self.fallback_model).__name__,
         )
         return self
 

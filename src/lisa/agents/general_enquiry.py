@@ -60,6 +60,9 @@ class GeneralEnquiry(BaseAgent):
                             "Agent requested handoff: %s",
                             tool_call["args"],
                         )
+                        return {
+                            "agent_handoff": tool_call["args"],
+                        }
 
             if chunk.content:
                 writer(

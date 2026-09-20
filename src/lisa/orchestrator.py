@@ -26,6 +26,7 @@ class Orchestrator:
             return {
                 "route": decision.route,
                 "active_route": decision.route,
+                "agent_handoff": None,
             }
 
         except Exception:
