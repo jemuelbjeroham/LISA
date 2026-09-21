@@ -19,6 +19,7 @@ from lisa.model import (
     create_fallback_model,
     create_router_model,
     create_thinking_chat_model,
+    create_technical_model,
 )
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
@@ -34,12 +35,14 @@ class LISA:
                  thinking_model: BaseChatModel | None = None, 
                  router_model: BaseChatModel | None = None,
                  fallback_model: BaseChatModel | None = None,
+                 technical_model: BaseChatModel | None = None,
                  conversation_store: ConversationStore | None = None
                 ):
         self.model = model
         self.fallback_model = fallback_model
         self.thinking_model = thinking_model
         self.router_model = router_model
+        self.technical_model = technical_model
         self.graph = None
         self.mcp_client: MCPClient | None = None
         self.conversation_store = (
@@ -259,6 +262,21 @@ class LISA:
             except Exception:
                 logger.exception("Failed to initialize fallback model")
                 raise
+
+        if self.technical_model is None:
+            logger.info(
+                "Initializing technical model: provider=%s, model_name=%s",
+                settings.technical_model_provider,
+                settings.technical_model_name,
+            )
+            try:
+                self.technical_model = create_technical_model(settings)
+                logger.info(
+                    "Technical model has been initialized: %s",
+                    type(self.technical_model).__name__,
+                )
+            except Exception:
+                logger.exception("Failed to initialize Technical Model")
 
         self.mcp_client = await self.exit_stack.enter_async_context(
             MCPClient(
