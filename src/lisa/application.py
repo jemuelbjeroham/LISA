@@ -18,8 +18,8 @@ from lisa.model import (
     create_chat_model,
     create_fallback_model,
     create_router_model,
-    create_thinking_chat_model,
     create_technical_model,
+    create_thinking_chat_model,
 )
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
@@ -293,6 +293,7 @@ class LISA:
         routing_prompt = load_prompt("orchestrator/routing_v1.txt")
         technical_prompt = load_prompt("technical_clarification/technical_clarification_v1.txt")
         general_enquiry_prompt = load_prompt("general_enquiry/general_enquiry_v1.txt")
+        hyde_prompt = load_prompt("technical_clarification/hyde_v1.txt")
 
         self.orchestrator = Orchestrator(
             model=self.router_model,
@@ -303,6 +304,7 @@ class LISA:
             model=self.model,
             retriever=retriever,
             system_prompt=technical_prompt,
+            hyde_prompt=hyde_prompt,
         )
 
         self.general_enquiry_agent = GeneralEnquiry(

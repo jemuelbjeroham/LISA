@@ -42,7 +42,7 @@ class ModelResilience:
                 type(self.primary).__name__,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Primary model timed out after %.1f seconds. "
                 "Switching to fallback model: %s",
