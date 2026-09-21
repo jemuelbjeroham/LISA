@@ -63,6 +63,28 @@ def create_router_model(settings: Settings) -> BaseChatModel:
         f"{settings.router_model_provider}"
     )
 
+def create_technical_model(settings: Settings) -> BaseChatModel:
+    if settings.technical_model_provider == "openai":
+        return ChatOpenAI(
+            model=settings.technical_model_name,
+            api_key=settings.openai_token,
+        )
+
+    if settings.technical_model_provider == "nvidia":
+        return ChatNVIDIA(
+            model=settings.technical_model_name,
+            model_kwargs={
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                },
+            }
+        )
+
+    raise ValueError(
+        f"Unsupported Technical Model Provider: "
+        f"{settings.technical_model_provider}"
+    )
+
 # def create_router_model(settings: Settings) -> BaseChatModel:
 #     if settings.router_model_provider == "huggingface":
 #         endpoint = HuggingFaceEndpoint(
