@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModelResilience:
+
     def __init__(
         self,
         primary: BaseChatModel,
@@ -23,6 +24,7 @@ class ModelResilience:
         self,
         messages: list[BaseMessage],
     ) -> AsyncIterator:
+
         try:
             logger.info(
                 "Starting primary model stream: model=%s",
@@ -40,29 +42,63 @@ class ModelResilience:
                 type(self.primary).__name__,
             )
 
-        except TimeoutError:
+        except asyncio.TimeoutError:
             logger.warning(
-                "Primary model timed outafter %s seconds. "
+                "Primary model timed out after %.1f seconds. "
                 "Switching to fallback model: %s",
                 self.inactivity_timeout_seconds,
                 type(self.fallback).__name__,
             )
 
-        except Exception:
-            logger.exception(
-                "Primary model stream failed or timed out. "
-                "Switching to fallback model: model=%s",
+            logger.info(
+                "Starting fallback model stream: model=%s",
                 type(self.fallback).__name__,
             )
 
             async for chunk in self.fallback.astream(messages):
+                logger.debug(
+                    "Received fallback model chunk: content=%r tool_calls=%s",
+                    chunk.content,
+                    chunk.tool_calls,
+                )
                 yield chunk
+
+            logger.info(
+                "Fallback model stream completed successfully: model=%s",
+                type(self.fallback).__name__,
+            )
+
+        except Exception:
+            logger.exception(
+                "Primary model failed unexpectedly. "
+                "Switching to fallback model: %s",
+                type(self.fallback).__name__,
+            )
+
+            logger.info(
+                "Starting fallback model stream: model=%s",
+                type(self.fallback).__name__,
+            )
+
+            async for chunk in self.fallback.astream(messages):
+                logger.debug(
+                    "Received fallback model chunk: content=%r tool_calls=%s",
+                    chunk.content,
+                    chunk.tool_calls,
+                )
+                yield chunk
+
+            logger.info(
+                "Fallback model stream completed successfully: model=%s",
+                type(self.fallback).__name__,
+            )
 
     async def _stream_with_timeout(
         self,
         model: BaseChatModel,
         messages: list[BaseMessage],
     ) -> AsyncIterator:
+
         stream = model.astream(messages).__aiter__()
 
         while True:

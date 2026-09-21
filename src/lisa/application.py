@@ -289,6 +289,7 @@ class LISA:
 
         self.general_enquiry_agent = GeneralEnquiry(
             model=self.model,
+            fallback_model=self.fallback_model,
             thinking_model=self.thinking_model,
             system_prompt=general_enquiry_prompt,
         )
