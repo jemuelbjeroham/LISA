@@ -301,7 +301,7 @@ class LISA:
         )
 
         self.technical_clarification_agent = TechnicalClarificationAgent(
-            model=self.model,
+            model=self.technical_model,
             retriever=retriever,
             system_prompt=technical_prompt,
             hyde_prompt=hyde_prompt,

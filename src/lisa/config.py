@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     #Technical Clarification Model
     technical_model_provider: str = "openai"
-    technical_model_name: str = "gpt-5"
+    technical_model_name: str = "gpt-5-nano"
 
     mcp_server_command: str = "uv"
     mcp_server_args: list[str] = [
