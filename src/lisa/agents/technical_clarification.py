@@ -45,6 +45,13 @@ class TechnicalClarificationAgent(BaseAgent):
                 "text-based user messages only."
             )
 
+        handoff = await self._check_scope(user_query)
+
+        if handoff is not None:
+            return {
+                "agent_handoff": handoff,
+            }
+        
         logger.info(
             "Technical clarification started: query=%r",
             user_query,
@@ -99,7 +106,7 @@ class TechnicalClarificationAgent(BaseAgent):
 
         knowledge_context = "\n\n".join(knowledge)
 
-        state["knowledge_content"] = knowledge
+        # state["knowledge_content"] = knowledge
 
 
         system_message = SystemMessage(
@@ -183,7 +190,20 @@ class TechnicalClarificationAgent(BaseAgent):
             "knowledge_context": knowledge,
         }
 
+    async def _check_scope(self, user_query: str):
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(content=user_query),
+        ]
 
+        response = await self.model.ainvoke(messages)
+
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                if tool_call["name"] == "handoff":
+                    return tool_call["args"]
+
+        return None
 
         
 
