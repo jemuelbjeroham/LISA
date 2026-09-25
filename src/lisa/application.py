@@ -25,6 +25,7 @@ from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 from lisa.routing import RoutingPolicy
 from lisa.streaming.events import StreamEvent
+from lisa.retrieval.planning import RetrievalPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class LISA:
                  router_model: BaseChatModel | None = None,
                  fallback_model: BaseChatModel | None = None,
                  technical_model: BaseChatModel | None = None,
+                 retrieval_planner: RetrievalPlanner | None = None,
                  conversation_store: ConversationStore | None = None
                 ):
         self.model = model
@@ -43,6 +45,7 @@ class LISA:
         self.thinking_model = thinking_model
         self.router_model = router_model
         self.technical_model = technical_model
+        self.retrieval_planner = retrieval_planner
         self.graph = None
         self.mcp_client: MCPClient | None = None
         self.conversation_store = (
@@ -294,6 +297,7 @@ class LISA:
         technical_prompt = load_prompt("technical_clarification/technical_clarification_v1.txt")
         general_enquiry_prompt = load_prompt("general_enquiry/general_enquiry_v1.txt")
         hyde_prompt = load_prompt("technical_clarification/hyde_v1.txt")
+        retrieval_planner_prompt = load_prompt("technical_clarification/retrieval_planner_v1.txt")
 
         self.orchestrator = Orchestrator(
             model=self.router_model,
@@ -305,6 +309,11 @@ class LISA:
             retriever=retriever,
             system_prompt=technical_prompt,
             hyde_prompt=hyde_prompt,
+        )
+
+        self.retrieval_planner = RetrievalPlanner(
+            model=self.router_model,
+            prompt=retrieval_planner_prompt
         )
 
         self.general_enquiry_agent = GeneralEnquiry(
