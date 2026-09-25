@@ -6,9 +6,9 @@ from langgraph.config import get_stream_writer
 
 from lisa.agents.base import BaseAgent
 from lisa.knowledge.protocol import KnowledgeRetriever
+from lisa.retrieval.planning import RetrievalPlanner
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
-from lisa.retrieval.planning import RetrievalPlanner
 
 logger = logging.getLogger(__name__)
 
