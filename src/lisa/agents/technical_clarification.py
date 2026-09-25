@@ -8,6 +8,7 @@ from lisa.agents.base import BaseAgent
 from lisa.knowledge.protocol import KnowledgeRetriever
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
+from lisa.retrieval.planning import RetrievalPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class TechnicalClarificationAgent(BaseAgent):
             system_prompt: str,
             hyde_prompt: str,
             retriever: KnowledgeRetriever,
+            retrieval_planner: RetrievalPlanner,
     ):
         self.hyde_model = model
         super().__init__(
@@ -27,6 +29,7 @@ class TechnicalClarificationAgent(BaseAgent):
 
         self.hyde_prompt = hyde_prompt
         self.retriever = retriever
+        self.retrieval_planner = retrieval_planner
 
     async def run(self, state: LISAState):
         user_message = state["messages"][-1]
@@ -57,57 +60,76 @@ class TechnicalClarificationAgent(BaseAgent):
             user_query,
         )
 
-        hyde_messages = [
-            SystemMessage(content=self.hyde_prompt),
-            HumanMessage(content=user_query),
-        ]
-
-        logger.info("Generating HyDE retrival document")
-
-        hyde_response = await self.hyde_model.ainvoke(
-            hyde_messages
+        retrieval_decision = await self.retrieval_planner.plan(
+            state["messages"]
         )
 
-        hypothetical_document = hyde_response.content
-
-        if not isinstance(hypothetical_document, str):
-            raise TypeError(
-                "HyDE model returned an empty retrievel document."
-            )
-
-        hypothetical_document = hypothetical_document.strip()
-
-        if not hypothetical_document:
-            raise RuntimeError(
-                "HyDE model returned an empty retrival document."
-            )
-
-        logger.debug(
-            "HyDE document generated: %s",
-            hypothetical_document,
-        )
-
-        """
-        Retrival of actual knowledge using HyDE document
-        """
+        retrieval_query = retrieval_decision.retrieval_query
 
         logger.info(
-            "Retrieving technical knowledge using HyDE document"
+            "Retrieval strategy selected: query=%r use_hyde=%s",
+            retrieval_query,
+            retrieval_decision.use_hyde,
+        )
+
+        if retrieval_decision.use_hyde:
+
+            hyde_messages = [
+                SystemMessage(content=self.hyde_prompt),
+                HumanMessage(content=retrieval_query),
+            ]
+
+            logger.info(
+                "Generating HyDE retrieval document"
+            )
+
+            hyde_response = await self.hyde_model.ainvoke(
+                hyde_messages
+            )
+
+            hypothetical_document = hyde_response.content
+
+            if not isinstance(hypothetical_document, str):
+                raise TypeError(
+                    "HyDE model returned a non-text retrieval document."
+                )
+
+            hypothetical_document = hypothetical_document.strip()
+
+            if not hypothetical_document:
+                raise RuntimeError(
+                    "HyDE model returned an empty retrieval document."
+                )
+
+            logger.debug(
+                "HyDE document generated: %s",
+                hypothetical_document,
+            )
+
+            retrieval_input = hypothetical_document
+
+        else:
+
+            logger.info(
+                "Skipping HyDE; using retrieval query directly"
+            )
+
+            retrieval_input = retrieval_query
+
+        logger.info(
+            "Retrieving technical knowledge"
         )
 
         knowledge = await self.retriever.retrieve(
-            hypothetical_document
+            retrieval_input
         )
 
         logger.info(
-            "Technical knowledge retrievel completed: chunks=%d",
+            "Technical knowledge retrieval completed: chunks=%d",
             len(knowledge),
         )
 
         knowledge_context = "\n\n".join(knowledge)
-
-        # state["knowledge_content"] = knowledge
-
 
         system_message = SystemMessage(
             content=(

@@ -23,9 +23,9 @@ from lisa.model import (
 )
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
+from lisa.retrieval.planning import RetrievalPlanner
 from lisa.routing import RoutingPolicy
 from lisa.streaming.events import StreamEvent
-from lisa.retrieval.planning import RetrievalPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +309,7 @@ class LISA:
             retriever=retriever,
             system_prompt=technical_prompt,
             hyde_prompt=hyde_prompt,
+            retrieval_planner=self.retrieval_planner,
         )
 
         self.retrieval_planner = RetrievalPlanner(
