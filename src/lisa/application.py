@@ -304,17 +304,17 @@ class LISA:
             routing_prompt=routing_prompt,
         )
 
+        self.retrieval_planner = RetrievalPlanner(
+            model=self.router_model,
+            prompt=retrieval_planner_prompt
+        )
+        
         self.technical_clarification_agent = TechnicalClarificationAgent(
             model=self.technical_model,
             retriever=retriever,
             system_prompt=technical_prompt,
             hyde_prompt=hyde_prompt,
             retrieval_planner=self.retrieval_planner,
-        )
-
-        self.retrieval_planner = RetrievalPlanner(
-            model=self.router_model,
-            prompt=retrieval_planner_prompt
         )
 
         self.general_enquiry_agent = GeneralEnquiry(
