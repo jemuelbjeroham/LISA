@@ -293,7 +293,7 @@ class LISA:
             client=self.mcp_client,
         )
 
-        routing_prompt = load_prompt("orchestrator/routing_v1.txt")
+        routing_prompt = load_prompt("orchestrator/routing_v2.txt")
         technical_prompt = load_prompt("technical_clarification/technical_clarification_v1.txt")
         general_enquiry_prompt = load_prompt("general_enquiry/general_enquiry_v1.txt")
         hyde_prompt = load_prompt("technical_clarification/hyde_v1.txt")
@@ -308,7 +308,7 @@ class LISA:
             model=self.router_model,
             prompt=retrieval_planner_prompt
         )
-        
+
         self.technical_clarification_agent = TechnicalClarificationAgent(
             model=self.technical_model,
             retriever=retriever,
