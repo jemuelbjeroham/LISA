@@ -1,4 +1,5 @@
 import json
+import logging
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -7,6 +8,7 @@ from lisa.conversation.serialization import ConversationStateSerializer
 from lisa.conversation.store import ConversationStore
 from lisa.state import LISAState
 
+logger = logging.getLogger(__name__)
 
 class RedisConversationStore(ConversationStore):
     def __init__(
@@ -26,11 +28,23 @@ class RedisConversationStore(ConversationStore):
     ) -> LISAState | None:
         key = self._key(conversation_id)
 
+        logger.info(
+            "Reading conversation state from Redis: key=%s",
+            key,
+        )
         data = await self.redis.get(key)
 
         if data is None:
+            logger.info(
+                "Conversation state not found in Redis: key=%s",
+                key,
+            )
             return None
 
+        logger.info(
+            "Conversation state retrived from Redis: key=%s",
+            key,
+        )
         serialized_state = json.loads(data)
 
         return ConversationStateSerializer.deserialize(
@@ -44,6 +58,10 @@ class RedisConversationStore(ConversationStore):
     ) -> None:
         key = self._key(conversation_id)
 
+        logger.info(
+            "Saving conversation state to Redis: key=%s",
+            key,
+        )
         serialized_state = ConversationStateSerializer.serialize(
             state
         )
@@ -51,4 +69,9 @@ class RedisConversationStore(ConversationStore):
         await self.redis.set(
             key,
             json.dumps(serialized_state),
+        )
+
+        logger.info(
+            "Conversation state saved to Redis: key=%s",
+            key,
         )

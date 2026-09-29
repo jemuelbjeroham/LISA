@@ -48,9 +48,9 @@ class LISA:
         self.retrieval_planner = retrieval_planner
         self.graph = None
         self.mcp_client: MCPClient | None = None
-        self.conversation_store = (
-            conversation_store or InMemoryConversationStore()
-        )
+        if conversation_store is None:
+            raise ValueError("conversation_store must be provided")
+        self.conversation_store = conversation_store
         self.orchestrator = None
         self.technical_clarification_agent = None
         self.general_enquiry_agent = None
