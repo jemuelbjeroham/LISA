@@ -9,7 +9,6 @@ from langchain_core.messages import HumanMessage
 from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.config import Settings
-from lisa.conversation.in_memory import InMemoryConversationStore
 from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
