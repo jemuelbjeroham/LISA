@@ -4,14 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lisa.infrastructure.postgres.models import MemoryModel
-from lisa.memory.models import Memory
-from lisa.memory.repository import MemoryRepository
 from lisa.memory.models import (
     Memory,
     MemoryScope,
     MemorySource,
     MemoryType,
 )
+from lisa.memory.repository import MemoryRepository
 
 
 class PostgresMemoryRepository(MemoryRepository):
