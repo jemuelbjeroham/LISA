@@ -5,7 +5,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="LISA_")
+    model_config = SettingsConfigDict(
+    env_prefix="LISA_",
+    env_file=".env",
+    env_file_encoding="utf-8",
+    extra="ignore",
+    )
     #Primary Model
     model_provider: str = "nvidia"
     model_name: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
@@ -31,3 +36,6 @@ class Settings(BaseSettings):
         "lisa_mcp_server.server",
     ]
     mcp_server_cwd: Path = Path("../lisa-mcp-server")
+
+    #Database
+    database_url: str = Field(validation_alias="LISA_DATABASE_URL")
