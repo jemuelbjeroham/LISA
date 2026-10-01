@@ -1,7 +1,7 @@
 from typing import Protocol
 from uuid import UUID
 
-from lisa.memory.retriever import Memory
+from lisa.memory.models import Memory
 
 
 class MemoryRetriever(Protocol):
@@ -12,4 +12,3 @@ class MemoryRetriever(Protocol):
             top_k: int = 5,
     ) -> list[Memory]:
         ...
-        
