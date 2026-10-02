@@ -5,6 +5,7 @@ from langgraph.graph import END, START, StateGraph
 
 from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
+from lisa.infrastructure.postgres.memory_dependencies import MemoryDependencies
 from lisa.orchestrator import Orchestrator
 from lisa.routing import Route, RoutingAction, RoutingPolicy
 from lisa.state import LISAState
@@ -42,7 +43,7 @@ def build_graph(
         general_enquiry_agent: GeneralEnquiry,
         routing_policy: RoutingPolicy,
 ):
-    builder = StateGraph(LISAState)
+    builder = StateGraph(LISAState, context_schema=MemoryDependencies)
 
     builder.add_node("orchestrator", orchestrator.route)
     builder.add_node("technical_clarification", technical_clarification_agent.run)

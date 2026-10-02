@@ -12,6 +12,9 @@ from lisa.config import Settings
 from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.infrastructure.postgres.database import Database
+from lisa.infrastructure.postgres.memory_dependencies import (
+    memory_dependencies,
+)
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
 from lisa.model import (
@@ -103,8 +106,18 @@ class LISA:
             conversation_id,
             len(state["messages"]),
         )
+
+        if self.database is None:
+            raise RuntimeError("Database has not been initialized")
+
         try:
-            result = await self.graph.ainvoke(state)
+            async with self.database.session() as session:
+                dependencies = memory_dependencies(session)
+
+                result = await self.graph.ainvoke(
+                    state,
+                    context=dependencies,
+                )
         except Exception:
             logger.exception(
                 "Conversation graph failed: conversation_id=%s",
