@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage
 from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.config import Settings
+from lisa.context import LISAContext
 from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.infrastructure.postgres.database import Database
@@ -71,7 +72,8 @@ class LISA:
             conversation_store is not None,
         )
 
-    async def chat(self, conversation_id: UUID, message: str, enable_thinking: bool = False) -> str:
+    async def chat(self, conversation_id: UUID, message: str, user_id: UUID, enable_thinking: bool = False) -> str:
+        
         logger.info(
             "Starting chat request: conversation_id=%s, thinking_enabled=%s",
             conversation_id,
@@ -112,11 +114,14 @@ class LISA:
 
         try:
             async with self.database.session() as session:
-                dependencies = memory_dependencies(session)
+                context = LISAContext(
+                    user_id=user_id,
+                    memory=memory_dependencies(session),
+                )
 
                 result = await self.graph.ainvoke(
                     state,
-                    context=dependencies,
+                    context=context,
                 )
         except Exception:
             logger.exception(
@@ -146,7 +151,7 @@ class LISA:
 
         return response.content
 
-    async def stream_chat(self, conversation_id: UUID, message: str, enable_thinking: bool = False):
+    async def stream_chat(self, conversation_id: UUID, message: str, user_id: UUID, enable_thinking: bool = False):
         logger.info(
             "Starting streaming chat request: conversation_id=%s, thinking_enabled=%s",
             conversation_id,
@@ -176,31 +181,46 @@ class LISA:
             HumanMessage(content=message)
         )
 
+        if self.database is None:
+            raise RuntimeError("Database is not initialized")
+        
         final_state = None
         event_count = 0
 
-        async for mode, chunk in self.graph.astream(state, stream_mode=["custom", "values"]):
-
-            if mode == "custom":
-
-                if not isinstance(chunk, StreamEvent):
-                    logger.warning(
-                        "Received unexpected custom stream event: type=%s",
-                        type(chunk).__name__,
-                    )
-                    continue
-
-                logger.info(
-                    "Received stream event: conversation_id=%s, type=%s",
-                    conversation_id,
-                    chunk.type,
+        try:
+            async with self.database.session() as session:
+                context = LISAContext(
+                    user_id=user_id,
+                    memory=memory_dependencies(session),
                 )
+                async for mode, chunk in self.graph.astream(state, context=context, stream_mode=["custom", "values"]):
 
-                event_count += 1
-                yield chunk
+                    if mode == "custom":
 
-            elif mode == "values":
-                final_state = chunk
+                        if not isinstance(chunk, StreamEvent):
+                            logger.warning(
+                                "Received unexpected custom stream event: type=%s",
+                                type(chunk).__name__,
+                            )
+                            continue
+
+                        logger.info(
+                            "Received stream event: conversation_id=%s, type=%s",
+                            conversation_id,
+                            chunk.type,
+                        )
+
+                        event_count += 1
+                        yield chunk
+
+                    elif mode == "values":
+                        final_state = chunk
+        except Exception:
+            logger.exception(
+                "Streaming graph failed: conversation_id=%s",
+                conversation_id,
+            )
+            raise
 
         if final_state is not None:
             try:
