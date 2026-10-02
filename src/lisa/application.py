@@ -11,6 +11,7 @@ from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.config import Settings
 from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
+from lisa.infrastructure.postgres.database import Database
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
 from lisa.model import (
@@ -47,6 +48,7 @@ class LISA:
         self.retrieval_planner = retrieval_planner
         self.graph = None
         self.mcp_client: MCPClient | None = None
+        self.database: Database | None = None
         if conversation_store is None:
             raise ValueError("conversation_store must be provided")
         self.conversation_store = conversation_store
@@ -232,6 +234,10 @@ class LISA:
     async def __aenter__(self) -> Self:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
         settings = Settings()
+
+        self.database = Database(settings)
+        self.exit_stack.push_async_callback(self.database.close)
+
         logger.debug(
             "Loaded application settings: model_provider=%s, router_model_provider=%s, "
             "mcp_server_command=%s",
