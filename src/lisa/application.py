@@ -7,6 +7,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from lisa.agents.general_enquiry import GeneralEnquiry
+from lisa.agents.mem_agent import MemoryAgent
 from lisa.agents.technical_clarification import TechnicalClarificationAgent
 from lisa.config import Settings
 from lisa.context import LISAContext
@@ -59,6 +60,7 @@ class LISA:
         self.orchestrator = None
         self.technical_clarification_agent = None
         self.general_enquiry_agent = None
+        self.memory_agent = None
         self.exit_stack = AsyncExitStack()
         self.routing_policy = None
         logger.debug(
@@ -336,15 +338,21 @@ class LISA:
         general_enquiry_prompt = load_prompt("general_enquiry/general_enquiry_v1.txt")
         hyde_prompt = load_prompt("technical_clarification/hyde_v1.txt")
         retrieval_planner_prompt = load_prompt("technical_clarification/retrieval_planner_v1.txt")
+        memory_agent_prompt = load_prompt("memory/memory_agent_v1.txt")
 
         self.orchestrator = Orchestrator(
             model=self.router_model,
             routing_prompt=routing_prompt,
         )
 
+        self.memory_agent = MemoryAgent(
+            model=self.model,
+            prompt=memory_agent_prompt,
+        )
+
         self.retrieval_planner = RetrievalPlanner(
             model=self.router_model,
-            prompt=retrieval_planner_prompt
+            prompt=retrieval_planner_prompt,
         )
 
         self.technical_clarification_agent = TechnicalClarificationAgent(
