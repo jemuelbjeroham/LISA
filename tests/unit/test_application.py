@@ -251,3 +251,55 @@ async def test_lisa_chat_handles_general_enquiry():
 
     general_enquiry_agent.run.assert_called_once()
     technical_clarification_agent.run.assert_not_called()
+
+from lisa.context import LISAContext
+
+
+@pytest.mark.anyio
+async def test_chat_passes_user_identity_and_memory_context(monkeypatch):
+    conversation_id = uuid4()
+    user_id = uuid4()
+    store = InMemoryConversationStore()
+
+    graph = AsyncMock()
+    graph.ainvoke.return_value = {
+        "messages": [AIMessage(content="Hello!")],
+    }
+
+    lisa = LISA(conversation_store=store)
+    lisa.graph = graph
+
+    # Mock the database session lifecycle.
+    session = AsyncMock()
+    session_context = MagicMock()
+    session_context.__aenter__ = AsyncMock(return_value=session)
+    session_context.__aexit__ = AsyncMock(return_value=False)
+
+    database = MagicMock()
+    database.session.return_value = session_context
+    lisa.database = database
+
+    # Replace dependency construction with a recognizable test object.
+    fake_memory = MagicMock()
+    monkeypatch.setattr(
+        "lisa.application.memory_dependencies",
+        lambda session: fake_memory,
+    )
+
+    response = await lisa.chat(
+        conversation_id=conversation_id,
+        message="Hello",
+        user_id=user_id,
+    )
+
+    assert response == "Hello!"
+
+    graph.ainvoke.assert_awaited_once()
+    _, kwargs = graph.ainvoke.call_args
+
+    context = kwargs["context"]
+    assert isinstance(context, LISAContext)
+    assert context.user_id == user_id
+    assert context.memory is fake_memory
+
+    database.session.assert_called_once()
