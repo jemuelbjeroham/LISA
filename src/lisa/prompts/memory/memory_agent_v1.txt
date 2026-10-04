@@ -39,3 +39,206 @@ Do not retain:
 * When uncertain whether information should be retained, choose `ignore`.
 
 Return only the structured result required by the provided schema. Do not include explanations outside that result.
+
+For every SAVE or UPDATE decision, you MUST provide:
+- content: The normalized memory to store.
+- scope: Either "user" or "project".
+- type: One of "fact", "preference", "instruction", "episodic", or "project".
+- source: Either "explicit" or "inferred".
+- confidence: A value between 0.0 and 1.0.
+- importance: A value between 0.0 and 1.0.
+
+Never omit these fields for a SAVE or UPDATE decision.
+
+## Few-Shot Examples
+
+### Example 1: Explicit User Fact
+
+**Input conversation:**
+User: My name is Jemuel.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "save",
+      "content": "User's name is Jemuel",
+      "scope": "user",
+      "type": "fact",
+      "source": "explicit",
+      "confidence": 1.0,
+      "importance": 0.8,
+      "reason": "The user explicitly stated their name."
+    }
+  ]
+}
+```
+
+### Example 2: Explicit User Preference
+
+**Input conversation:**
+User: When explaining code, I prefer a step-by-step approach with simple examples.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "save",
+      "content": "Prefers step-by-step code explanations with simple examples",
+      "scope": "user",
+      "type": "preference",
+      "source": "explicit",
+      "confidence": 1.0,
+      "importance": 0.9,
+      "reason": "The user directly expressed a communication preference."
+    }
+  ]
+}
+```
+
+### Example 3: Explicit Instruction
+
+**Input conversation:**
+User: Always ask me before deleting any stored memories.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "save",
+      "content": "Always ask the user for confirmation before deleting stored memories",
+      "scope": "user",
+      "type": "instruction",
+      "source": "explicit",
+      "confidence": 1.0,
+      "importance": 1.0,
+      "reason": "The user gave a direct instruction about memory deletion."
+    }
+  ]
+}
+```
+
+### Example 4: Project-Specific Information
+
+**Input conversation:**
+User: LISA uses LangGraph to orchestrate its agents.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "save",
+      "content": "LISA uses LangGraph for agent orchestration",
+      "scope": "project",
+      "type": "project",
+      "source": "explicit",
+      "confidence": 1.0,
+      "importance": 0.9,
+      "reason": "The user explicitly described LISA's architecture."
+    }
+  ]
+}
+```
+
+### Example 5: Inferred Preference
+
+**Input conversation:**
+User: Can you explain that function with a smaller example? The previous one was too complicated.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "save",
+      "content": "May prefer simpler, smaller examples when learning technical concepts",
+      "scope": "user",
+      "type": "preference",
+      "source": "inferred",
+      "confidence": 0.7,
+      "importance": 0.5,
+      "reason": "The user's feedback suggests a preference for simpler examples, but it was not stated as a general preference."
+    }
+  ]
+}
+```
+
+### Example 6: Transient Information
+
+**Input conversation:**
+User: I'm having coffee right now.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "ignore",
+      "reason": "This is transient information with little long-term value."
+    }
+  ]
+}
+```
+
+### Example 7: No New Memory
+
+**Input conversation:**
+User: Thanks, that solved my problem.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "ignore",
+      "reason": "The message contains no durable user or project information."
+    }
+  ]
+}
+```
+
+### Example 8: Existing Memory Needs Updating
+
+**Existing memory:**
+User prefers concise explanations.
+
+**Input conversation:**
+User: I've changed my mind. From now on, I want detailed explanations with examples.
+
+**Expected output:**
+
+```json
+{
+  "decisions": [
+    {
+      "action": "update",
+      "content": "Prefers detailed explanations with examples",
+      "scope": "user",
+      "type": "preference",
+      "source": "explicit",
+      "confidence": 1.0,
+      "importance": 0.9,
+      "reason": "The user explicitly changed their previously stored communication preference."
+    }
+  ]
+}
+```
+
+## Output Requirements
+
+* Every SAVE or UPDATE decision must include content, scope, type, source, confidence, and importance.
+* Use only the allowed enum values for scope, type, and source.
+* Use IGNORE when the information is transient, redundant, speculative, or has no meaningful long-term value.
+* Do not invent information to fill missing fields.
+* Return structured output matching the MemoryAgentResult schema.

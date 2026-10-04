@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -33,8 +33,12 @@ class Memory(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     importance: float = Field(ge=0.0, le=1.0)
 
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
     last_accessed_at: datetime | None = None
 
 

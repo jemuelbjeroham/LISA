@@ -40,9 +40,26 @@ class MemoryWorkflow:
         saved_memories: list[Memory] = []
 
         for decision in result.decisions:
+            logger.info(
+                "Checking memory decision: action=%r, expected=%r, match=%s",
+                decision.action,
+                MemoryAction.SAVE,
+                decision.action == MemoryAction.SAVE,
+            )
             if decision.action != MemoryAction.SAVE:
                 continue
 
+            logger.info(
+                "Decision fields: content=%r, scope=%r, type=%r, source=%r, "
+                "confidence=%r, importance=%r",
+                decision.content,
+                decision.scope,
+                decision.type,
+                decision.source,
+                decision.confidence,
+                decision.importance,
+            )
+            
             if (
                 decision.content is None
                 or decision.scope is None
@@ -51,6 +68,7 @@ class MemoryWorkflow:
                 or decision.source is None
             ):
                 continue
+
 
             memory = Memory(
                 user_id=user_id,
