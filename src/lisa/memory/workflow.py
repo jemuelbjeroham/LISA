@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from langchain_core.messages import BaseMessage
@@ -7,6 +8,7 @@ from lisa.memory.decision import MemoryAction
 from lisa.memory.models import Memory
 from lisa.memory.service import MemoryService
 
+logger = logging.getLogger(__name__)
 
 class MemoryWorkflow:
     def __init__(
@@ -23,6 +25,18 @@ class MemoryWorkflow:
             messages: list[BaseMessage],
     ) -> list[Memory]:
         result = await self.agent.analyze(messages)
+        logger.info(
+            "MemoryAgent returned %d decisions: %s",
+            len(result.decisions),
+            [
+                {
+                    "action": decision.action,
+                    "content": decision.content,
+                    "reason": decision.reason,
+                }
+                for decision in result.decisions
+            ],
+        )
         saved_memories: list[Memory] = []
 
         for decision in result.decisions:
