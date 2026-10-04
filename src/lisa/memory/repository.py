@@ -29,3 +29,11 @@ class MemoryRepository(Protocol):
             memory_id: UUID,
     ) -> None:
         ...
+
+    async def find_duplicate(
+            self,
+            memory: Memory,
+    ) -> Memory | None:
+        ...
+
+    

@@ -19,3 +19,6 @@ class MemoryService:
 
     async def delete(self, memory_id: UUID) -> None:
         await self.repository.delete(memory_id)
+
+    async def find_duplicate(self, memory: Memory) -> Memory | None:
+        return await self.repository.find_duplicate(memory)

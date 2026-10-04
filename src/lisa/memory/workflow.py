@@ -59,7 +59,7 @@ class MemoryWorkflow:
                 decision.confidence,
                 decision.importance,
             )
-            
+
             if (
                 decision.content is None
                 or decision.scope is None
@@ -79,6 +79,16 @@ class MemoryWorkflow:
                 confidence=decision.confidence,
                 importance=decision.importance,
             )
+
+            duplicate = await self.service.find_duplicate(memory)
+
+            if duplicate is not None:
+                logger.info(
+                    "Duplicate memory detected: memory_id=%s, content=%r",
+                    duplicate.id,
+                    duplicate.content,
+                )
+                continue
 
             saved = await self.service.create(memory)
             saved_memories.append(saved)

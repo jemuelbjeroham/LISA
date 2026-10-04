@@ -113,3 +113,31 @@ class PostgresMemoryRepository(MemoryRepository):
 
         await self.session.delete(model)
         await self.session.commit()
+
+    async def find_duplicate(
+            self,
+            memory: Memory,
+    ) -> Memory | None:
+
+        result = await self.session.execute(
+            select(MemoryModel).where(
+                MemoryModel.user_id == memory.user_id,
+                MemoryModel.scope == memory.scope.value,
+                MemoryModel.type == memory.type.value,
+            )
+        )
+
+        normalized_content = " ".join(
+            memory.content.split()
+        ).casefold()
+
+        for model in result.scalars():
+            existing_content = " ".join(
+                model.content.split()
+            ).casefold()
+
+            if existing_content == normalized_content:
+                return self._to_domain(model)
+
+        return None
+    
