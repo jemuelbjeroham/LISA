@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from lisa.config import Settings
@@ -21,7 +21,7 @@ async def test_memory_retriever_filters_and_ranks_memories():
     database = Database(Settings())
     user_id = uuid4()
     another_user_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     memories = [
         Memory(

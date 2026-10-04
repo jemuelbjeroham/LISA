@@ -1,10 +1,11 @@
+import asyncio
 import logging
 from contextlib import AsyncExitStack
 from typing import Self
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.mem_agent import MemoryAgent
@@ -19,6 +20,7 @@ from lisa.infrastructure.postgres.memory_dependencies import (
 )
 from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
 from lisa.mcp.client import MCPClient
+from lisa.memory.workflow import MemoryWorkflow
 from lisa.model import (
     create_chat_model,
     create_fallback_model,
@@ -63,6 +65,7 @@ class LISA:
         self.memory_agent = None
         self.exit_stack = AsyncExitStack()
         self.routing_policy = None
+        self._memory_tasks: set[asyncio.Task[None]] = set()
         logger.debug(
             "LISA instance created: custom_model=%s, custom_thinking_model=%s, "
             "custom_router_model=%s, custom_fallback_model=%s, "
@@ -74,6 +77,59 @@ class LISA:
             conversation_store is not None,
         )
 
+    def _schedule_memory_processing(
+            self,
+            user_id: UUID,
+            messages: list[BaseMessage],
+            conversation_id: UUID,
+    ) -> None:
+        if self.memory_agent is None or self.database is None:
+            logger.warning("Memory processing is unavailable")
+            return
+
+        task = asyncio.create_task(
+            self._process_memory(
+                user_id=user_id,
+                messages=messages,
+                conversation_id=conversation_id,
+            ),
+            name=f"memory-{conversation_id}",
+        )
+        self._memory_tasks.add(task)
+        task.add_done_callback(self._memory_tasks.discard)
+
+    async def _process_memory(
+            self,
+            user_id: UUID,
+            messages: list[BaseMessage],
+            conversation_id: UUID,
+    ) -> None:
+        try:
+            if self.database is None or self.memory_agent is None:
+                return
+            
+            async with self.database.session() as session:
+                dependencies = memory_dependencies(session)
+                workflow = MemoryWorkflow(
+                    agent=self.memory_agent,
+                    service=dependencies.service,
+                )
+                saved = await workflow.process(
+                    user_id=user_id,
+                    messages=messages,
+                )
+
+            logger.info(
+                "Memory processing completed: conversation_id=%s, saved=%d",
+                conversation_id,
+                len(saved),
+            )
+        except Exception:
+            logger.exception(
+                "Background memory processing failed: conversation_id=%s",
+                conversation_id,
+            )
+        
     async def chat(self, conversation_id: UUID, message: str, user_id: UUID, enable_thinking: bool = False) -> str:
         
         logger.info(
@@ -149,6 +205,14 @@ class LISA:
             "Completed chat request: conversation_id=%s, response_type=%s",
             conversation_id,
             type(response).__name__,
+        )
+
+        self._schedule_memory_processing(
+            user_id=user_id,
+            messages=[HumanMessage(content=message),
+                      response,
+            ],
+            conversation_id=conversation_id,
         )
 
         return response.content
@@ -230,6 +294,19 @@ class LISA:
                     conversation_id,
                     final_state,
                 )
+
+                messages = final_state["messages"]
+
+                if messages and messages[-1].type == "ai":
+                    self._schedule_memory_processing(
+                        user_id=user_id,
+                        messages=[
+                            HumanMessage(content=message),
+                            messages[-1],
+                        ],
+                        conversation_id=conversation_id,
+                    )
+
             except Exception:
                 logger.exception(
                     "Failed to persist streaming result: conversation_id=%s",
@@ -400,6 +477,15 @@ class LISA:
             exc_type.__name__ if exc_type else None,
         )
         try:
+            if self._memory_tasks:
+                logger.info(
+                    "Waiting for background memory tasks: count=%d",
+                    len(self._memory_tasks),
+                )
+                await asyncio.gather(
+                    *self._memory_tasks,
+                    return_exceptions=True,
+                )
             await self.exit_stack.aclose()
         except Exception:
             logger.exception("Application LISA shutdown failed")

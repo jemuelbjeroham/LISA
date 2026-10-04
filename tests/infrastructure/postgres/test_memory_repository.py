@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,8 +30,8 @@ async def test_memory_repository_crud():
                 source=MemorySource.EXPLICIT,
                 confidence=1.0,
                 importance=0.8,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
             )
 
             # Create
@@ -56,7 +56,7 @@ async def test_memory_repository_crud():
             # Update
             retrieved.content = "User prefers concise technical explanations with examples."
             retrieved.importance = 0.9
-            retrieved.updated_at = datetime.now(timezone.utc)
+            retrieved.updated_at = datetime.now(UTC)
 
             updated = await repository.update(retrieved)
 
