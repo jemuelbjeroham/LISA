@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from langchain_core.messages import BaseMessage
@@ -44,12 +45,82 @@ class MemoryWorkflow:
         saved_memories: list[Memory] = []
 
         for decision in result.decisions:
+
             logger.info(
-                "Checking memory decision: action=%r, expected=%r, match=%s",
+                "Checking memory decision: action=%r",
                 decision.action,
-                MemoryAction.SAVE,
-                decision.action == MemoryAction.SAVE,
             )
+
+            if decision.action == MemoryAction.UPDATE:
+                if decision.target_memory_id is None:
+                    logger.warning(
+                        "UPDATE decision missing target_memory_id; skipping"
+                    )
+                    continue
+
+                if (
+                    decision.content is None
+                    or decision.scope is None
+                    or decision.type is None
+                    or decision.source is None
+                ):
+                    logger.warning(
+                        "UPDATE decision missing required fields; skipping"
+                    )
+                    continue
+
+                target = await self.service.get(
+                    decision.target_memory_id
+                )
+
+                if target is None:
+                    logger.warning(
+                        "UPDATE target memory not found: memory_id=%s",
+                        decision.target_memory_id,
+                    )
+                    continue
+
+                if target.user_id != user_id:
+                    logger.warning(
+                        "UPDATE target belongs to a different user: memory_id=%s",
+                        target.id,
+                    )
+                    continue
+
+                now = datetime.now(UTC)
+
+                # Close the historical memory.
+                target.valid_to = now
+                target.updated_at = now
+
+                await self.service.update(target)
+
+                # Create the new current version.
+                updated_memory = Memory(
+                    user_id=user_id,
+                    scope=decision.scope,
+                    type=decision.type,
+                    content=decision.content,
+                    source=decision.source,
+                    confidence=decision.confidence,
+                    importance=decision.importance,
+                    valid_from=now,
+                    valid_to=None,
+                )
+
+                saved = await self.service.create(updated_memory)
+                saved_memories.append(saved)
+
+                logger.info(
+                    "Memory superseded: old_id=%s, new_id=%s",
+                    target.id,
+                    saved.id,
+                )
+
+                continue
+
+
+
             if decision.action != MemoryAction.SAVE:
                 continue
 
@@ -67,7 +138,6 @@ class MemoryWorkflow:
             if (
                 decision.content is None
                 or decision.scope is None
-                or decision.scope is None
                 or decision.type is None
                 or decision.source is None
             ):
@@ -82,6 +152,8 @@ class MemoryWorkflow:
                 source=decision.source,
                 confidence=decision.confidence,
                 importance=decision.importance,
+                valid_from=now,
+                valid_to=None,
             )
 
             duplicate = await self.service.find_duplicate(memory)
