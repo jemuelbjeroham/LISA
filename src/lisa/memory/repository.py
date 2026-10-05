@@ -18,6 +18,12 @@ class MemoryRepository(Protocol):
     ) -> Memory | None:
         ...
 
+    async def list_by_user(
+            self,
+            user_id: UUID,
+    ) -> list[Memory]:
+        ...
+        
     async def update(
             self,
             memory: Memory,
@@ -36,4 +42,3 @@ class MemoryRepository(Protocol):
     ) -> Memory | None:
         ...
 
-    

@@ -14,6 +14,9 @@ class MemoryService:
     async def get(self, memory_id: UUID) -> Memory | None:
         return await self.repository.get(memory_id)
 
+    async def list_by_user(self, user_id: UUID) -> list[Memory]:
+        return await self.repository.list_by_user(user_id)
+
     async def update(self, memory: Memory) -> Memory:
         return await self.repository.update(memory)
 

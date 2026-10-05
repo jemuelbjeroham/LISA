@@ -1,4 +1,5 @@
 from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 from lisa.memory.models import MemoryScope, MemorySource, MemoryType

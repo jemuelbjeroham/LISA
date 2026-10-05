@@ -79,6 +79,24 @@ class PostgresMemoryRepository(MemoryRepository):
 
         return self._to_domain(model)
 
+    async def list_by_user(
+            self,
+            user_id: UUID,
+    ) -> list[Memory]:
+        result = await self.session.execute(
+            select(MemoryModel)
+            .where(MemoryModel.user_id == user_id)
+            .order_by(
+                MemoryModel.importance.desc(),
+                MemoryModel.updated_at.desc(),
+            )
+        )
+
+        return [
+            self._to_domain(model)
+            for model in result.scalars().all()
+        ]
+
     async def update(self, memory: Memory) -> Memory:
         model = await self.session.get(
             MemoryModel,
