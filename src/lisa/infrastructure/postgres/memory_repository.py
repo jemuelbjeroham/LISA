@@ -31,6 +31,8 @@ class PostgresMemoryRepository(MemoryRepository):
             created_at=memory.created_at,
             updated_at=memory.updated_at,
             last_accessed_at=memory.last_accessed_at,
+            valid_from=memory.valid_from,
+            valid_to=memory.valid_to,
         )
 
     @staticmethod
@@ -47,6 +49,8 @@ class PostgresMemoryRepository(MemoryRepository):
             created_at=model.created_at,
             updated_at=model.updated_at,
             last_accessed_at=model.last_accessed_at,
+            valid_from=model.valid_from,
+            valid_to=model.valid_to,
         )
 
     async def create(self, memory: Memory) -> Memory:
@@ -96,6 +100,8 @@ class PostgresMemoryRepository(MemoryRepository):
         model.created_at = memory.created_at
         model.updated_at = memory.updated_at
         model.last_accessed_at = memory.last_accessed_at
+        model.valid_from = memory.valid_from
+        model.valid_to = memory.valid_to
 
         await self.session.commit()
         await self.session.refresh(model)

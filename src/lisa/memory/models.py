@@ -29,6 +29,13 @@ class Memory(BaseModel):
 
     content: str
 
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+    recorded_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
+
     source: MemorySource
     confidence: float = Field(ge=0.0, le=1.0)
     importance: float = Field(ge=0.0, le=1.0)

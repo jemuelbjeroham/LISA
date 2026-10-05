@@ -64,3 +64,13 @@ class MemoryModel(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    valid_to: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )

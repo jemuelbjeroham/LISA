@@ -1,3 +1,4 @@
+from uuid import UUID
 from pydantic import BaseModel, Field
 
 from lisa.memory.models import MemoryScope, MemorySource, MemoryType
@@ -26,6 +27,13 @@ class MemoryDecision(BaseModel):
     reason: str = Field(
         default="",
         description="Brief explanation for the decision",
+    )
+    target_memory_id: UUID | None = Field(
+        default=None,
+        description=(
+            "ID of the existing memory being updated. "
+            "Only set when the decision updates a specific existing memory."
+        ),
     )
 
 class MemoryAgentResult(BaseModel):
