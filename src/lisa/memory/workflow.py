@@ -24,7 +24,11 @@ class MemoryWorkflow:
             user_id: UUID,
             messages: list[BaseMessage],
     ) -> list[Memory]:
-        result = await self.agent.analyze(messages)
+        existing_memories = await self.service.list_by_user(user_id)
+        result = await self.agent.analyze(
+            messages,
+            existing_memories=existing_memories,
+        )
         logger.info(
             "MemoryAgent returned %d decisions: %s",
             len(result.decisions),
