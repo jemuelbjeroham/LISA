@@ -143,7 +143,8 @@ class MemoryWorkflow:
             ):
                 continue
 
-
+            now = datetime.now(UTC)
+            
             memory = Memory(
                 user_id=user_id,
                 scope=decision.scope,
