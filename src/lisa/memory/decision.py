@@ -20,9 +20,9 @@ class MemoryDecision(BaseModel):
         default=None,
         description="A concise, normalized memory statement.",
     )
-    scope: MemoryScope | None = None
-    type: MemoryType | None = None
-    source: MemorySource | None = None
+    scope: MemoryScope
+    type: MemoryType
+    source: MemorySource
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     importance: float = Field(default=0.0, ge=0.0, le=1.0)
     reason: str = Field(
