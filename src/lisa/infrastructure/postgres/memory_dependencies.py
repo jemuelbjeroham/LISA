@@ -5,21 +5,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from lisa.infrastructure.postgres.memory_repository import (
     PostgresMemoryRepository,
 )
-from lisa.infrastructure.postgres.memory_retriever import (
-    PostgresMemoryRetriever,
-)
+from lisa.memory.retriever import MemoryRetriever
 from lisa.memory.service import MemoryService
 
 
 @dataclass
 class MemoryDependencies:
     service: MemoryService
-    retriever: PostgresMemoryRetriever
-
+    retriever: MemoryRetriever
 
 def memory_dependencies(session: AsyncSession) -> MemoryDependencies:
     repository = PostgresMemoryRepository(session)
-    retriever = PostgresMemoryRetriever(session)
+    service = MemoryService(repository)
+    retriever = MemoryRetriever(service)
 
     return MemoryDependencies(
         service=MemoryService(repository),
