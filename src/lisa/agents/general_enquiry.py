@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.config import get_stream_writer
 
 from lisa.agents.base import BaseAgent
+from lisa.memory.context_service import MemoryContextService
 from lisa.model_resilience import ModelResilience
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
@@ -20,6 +21,7 @@ class GeneralEnquiry(BaseAgent):
         fallback_model: BaseChatModel,
         thinking_model: BaseChatModel,
         system_prompt: str,
+        memory_context_service: MemoryContextService,
     ):
         super().__init__(
             model=model,
@@ -36,10 +38,24 @@ class GeneralEnquiry(BaseAgent):
             inactivity_timeout_seconds=10.0,
         )
 
+        self.memory_context_service = memory_context_service
+
     async def run(self, state: LISAState):
 
+        user_query = state["messages"][-1].content
+
+        memory_context = await self.memory_context_service.build(
+            user_id=state["user_id"],
+            query=user_query,
+        )
+
+        system_content = self.system_prompt
+
+        if memory_context:
+            system_content = f"{system_content}\n\n{memory_context}"
+
         messages = [
-            SystemMessage(content=self.system_prompt),
+            SystemMessage(content=system_content),
             *state["messages"],
         ]
 
