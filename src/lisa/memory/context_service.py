@@ -1,15 +1,13 @@
 from uuid import UUID
 
-from lisa.infrastructure.postgres.memory_retriever import (
-    PostgresMemoryRetriever,
-)
 from lisa.memory.context import MemoryContextBuilder
+from lisa.memory.retriever import MemoryRetriever
 
 
 class MemoryContextService:
     def __init__(
         self,
-        retriever: PostgresMemoryRetriever,
+        retriever: MemoryRetriever,
         builder: MemoryContextBuilder,
     ):
         self.retriever = retriever

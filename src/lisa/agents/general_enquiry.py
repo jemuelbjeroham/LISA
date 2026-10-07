@@ -3,8 +3,10 @@ import logging
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.config import get_stream_writer
+from langgraph.runtime import Runtime
 
 from lisa.agents.base import BaseAgent
+from lisa.context import LISAContext
 from lisa.memory.context_service import MemoryContextService
 from lisa.model_resilience import ModelResilience
 from lisa.state import LISAState
@@ -40,11 +42,16 @@ class GeneralEnquiry(BaseAgent):
 
         self.memory_context_service = memory_context_service
 
-    async def run(self, state: LISAState):
+    async def run(self, state: LISAState, runtime: Runtime[LISAContext]):
 
-        user_query = state["messages"][-1].content
+        last_message = state["messages"][-1]
+        user_query = (
+            last_message.content
+            if isinstance(last_message.content, str)
+            else str(last_message.content)
+        )
 
-        memory_context = await self.memory_context_service.build(
+        memory_context = await runtime.context.memory.context_service.build(
             user_id=state["user_id"],
             query=user_query,
         )
