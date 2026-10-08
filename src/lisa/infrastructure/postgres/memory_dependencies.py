@@ -15,12 +15,12 @@ from lisa.memory.service import MemoryService
 class MemoryDependencies:
     service: MemoryService
     retriever: MemoryRetriever
+    context_service: MemoryContextService
 
 def memory_dependencies(session: AsyncSession) -> MemoryDependencies:
     repository = PostgresMemoryRepository(session)
     service = MemoryService(repository)
     retriever = MemoryRetriever(service)
-    context_service: MemoryContextService
 
     context_service = MemoryContextService(
         retriever=retriever,

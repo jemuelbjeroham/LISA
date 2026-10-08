@@ -49,7 +49,7 @@ class GeneralEnquiry(BaseAgent):
         )
 
         memory_context = await runtime.context.memory.context_service.build(
-            user_id=state["user_id"],
+            user_id=runtime.context.user_id,
             query=user_query,
         )
 
