@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from langchain_core.language_models import BaseChatModel
 
 from lisa.state import LISAState
-from lisa.tools import handoff
+from lisa.tools import handoff, save_memory
 
 
 class BaseAgent(ABC):
@@ -13,7 +13,7 @@ class BaseAgent(ABC):
 
     @staticmethod
     def bind_tools(model: BaseChatModel) -> BaseChatModel:
-        return model.bind_tools([handoff], tool_choice="auto")
+        return model.bind_tools([handoff, save_memory], tool_choice="auto")
     
     @abstractmethod
     async def run(self, state: LISAState):
