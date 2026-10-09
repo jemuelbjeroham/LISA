@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -6,6 +7,7 @@ from rank_bm25 import BM25Okapi
 from lisa.memory.models import Memory
 from lisa.memory.service import MemoryService
 
+logger = logging.getLogger(__name__)
 
 class MemoryRetriever:
     def __init__(self, service: MemoryService):
@@ -31,6 +33,11 @@ class MemoryRetriever:
             if self._is_valid(memory, now)
         ]
 
+        logger.info(
+            "Memory retrieval candidates: %s",
+            [memory.content for memory in valid_memories],
+        )
+
         if not valid_memories:
             return []
 
@@ -52,6 +59,18 @@ class MemoryRetriever:
             zip(valid_memories, scores),
             key=lambda item: item[1],
             reverse=True,
+        )
+
+        logger.info(
+            "Memory retrieval: user_id=%s query=%r candidates=%d selected=%s",
+            user_id,
+            query,
+            len(valid_memories),
+            [
+                memory.content
+                for memory, score in ranked_memories[:top_k]
+                if score > 0
+            ],
         )
 
         return [
