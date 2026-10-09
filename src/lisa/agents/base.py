@@ -1,15 +1,10 @@
 from abc import ABC, abstractmethod
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import tool
 
 from lisa.state import LISAState
+from lisa.tools import handoff
 
-
-@tool
-def handoff(reason: str) -> str:
-    """Handoff the current request back to the orchestrator"""
-    return reason
 
 class BaseAgent(ABC):
     def __init__(self, model: BaseChatModel, system_prompt: str):
