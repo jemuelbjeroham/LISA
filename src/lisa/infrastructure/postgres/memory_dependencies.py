@@ -9,6 +9,8 @@ from lisa.memory.context import MemoryContextBuilder
 from lisa.memory.context_service import MemoryContextService
 from lisa.memory.retriever import MemoryRetriever
 from lisa.memory.service import MemoryService
+from lisa.memory.user_context.repository import UserContextRepository
+from lisa.memory.user_context.service import UserContextService
 
 
 @dataclass
@@ -16,6 +18,7 @@ class MemoryDependencies:
     service: MemoryService
     retriever: MemoryRetriever
     context_service: MemoryContextService
+    user_context_service: UserContextService
 
 def memory_dependencies(session: AsyncSession) -> MemoryDependencies:
     repository = PostgresMemoryRepository(session)
@@ -26,8 +29,13 @@ def memory_dependencies(session: AsyncSession) -> MemoryDependencies:
         retriever=retriever,
         builder=MemoryContextBuilder()
     )
+
+    user_context_repository = UserContextRepository(session)
+    user_context_service = UserContextService(user_context_repository)
+
     return MemoryDependencies(
         service=MemoryService(repository),
         retriever=retriever,
         context_service=context_service,
+        user_context_service=user_context_service,
     )
