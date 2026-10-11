@@ -5,17 +5,16 @@ Revises: bef4ed7c2b38
 Create Date: 2026-10-11 19:36:09.805121
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '7c6a7dcf39c0'
-down_revision: Union[str, Sequence[str], None] = 'bef4ed7c2b38'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'bef4ed7c2b38'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 
