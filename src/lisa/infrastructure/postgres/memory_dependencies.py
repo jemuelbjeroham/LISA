@@ -34,7 +34,7 @@ def memory_dependencies(session: AsyncSession) -> MemoryDependencies:
     user_context_service = UserContextService(user_context_repository)
 
     return MemoryDependencies(
-        service=MemoryService(repository),
+        service=service,
         retriever=retriever,
         context_service=context_service,
         user_context_service=user_context_service,

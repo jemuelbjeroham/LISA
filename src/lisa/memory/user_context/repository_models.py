@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, String
+from sqlalchemy import JSON, DateTime, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lisa.infrastructure.postgres.models import Base
@@ -40,6 +40,15 @@ class UserProfileModel(Base):
 
 class UserPreferenceModel(Base):
     __tablename__ = "user_preferences"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "category",
+            "key",
+            name="uq_user_preference_user_category_key",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         primary_key=True,
