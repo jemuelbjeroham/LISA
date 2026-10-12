@@ -1,4 +1,5 @@
 
+import json
 import logging
 
 from langchain_core.language_models import BaseChatModel
@@ -13,6 +14,7 @@ from langgraph.runtime import Runtime
 
 from lisa.agents.base import BaseAgent
 from lisa.context import LISAContext
+from lisa.mcp.client import MCPClient
 from lisa.model_resilience import ModelResilience
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
@@ -29,6 +31,7 @@ class GeneralEnquiry(BaseAgent):
         fallback_model: BaseChatModel,
         thinking_model: BaseChatModel,
         system_prompt: str,
+        mcp_client: MCPClient,
     ):
         super().__init__(
             model=model,
@@ -37,6 +40,7 @@ class GeneralEnquiry(BaseAgent):
 
         self.fallback_model = self.bind_tools(fallback_model)
         self.thinking_model = self.bind_tools(thinking_model)
+        self.mcp_client = mcp_client
 
         self.model_resilience = ModelResilience(
             primary=self.model,
@@ -48,6 +52,33 @@ class GeneralEnquiry(BaseAgent):
             "handoff": handoff,
             "save_memory": save_memory,
         }
+
+
+    async def _get_mcp_tool_schemas(self) -> list[dict]:
+        """Discover MCP tools and convert them to OpenAI-compatible schemas."""
+        result = await self.mcp_client.list_tools()
+
+        schemas = []
+
+        for tool in result.tools:
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "parameters": tool.inputSchema,
+                    },
+                }
+            )
+
+        logger.info(
+            "Discovered MCP tools for GeneralEnquiry: %s",
+            [schema["function"]["name"] for schema in schemas],
+        )
+
+        return schemas
+
 
     async def run(
         self,
@@ -67,7 +98,7 @@ class GeneralEnquiry(BaseAgent):
             "Building user context for user_id=%s",
             runtime.context.user_id,
         )
-        
+
         # Always load the user's structured profile and preferences.
         user_context = (
             await runtime.context.memory.user_context_service.build_context(
