@@ -449,6 +449,8 @@ class LISA:
             mcp_client=self.mcp_client,
         )
 
+        await self.general_enquiry_agent.initialize_tools()
+
         self.routing_policy = RoutingPolicy()
 
         self.graph = build_graph(

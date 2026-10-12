@@ -7,6 +7,7 @@ from langchain_core.messages import (
     AIMessage,
     SystemMessage,
     ToolMessage,
+    HumanMessage,
 )
 from langchain_core.messages.utils import message_chunk_to_message
 from langgraph.config import get_stream_writer
@@ -67,7 +68,7 @@ class GeneralEnquiry(BaseAgent):
                     "function": {
                         "name": tool.name,
                         "description": tool.description or "",
-                        "parameters": tool.inputSchema,
+                        "parameters": tool.input_schema,
                     },
                 }
             )
@@ -78,6 +79,148 @@ class GeneralEnquiry(BaseAgent):
         )
 
         return schemas
+
+
+    async def _execute_mcp_tool(
+        self,
+        name: str,
+        arguments: dict,
+    ) -> str:
+        """Execute an MCP tool and return its textual result."""
+        logger.info(
+            "Executing MCP tool: name=%s arguments=%s",
+            name,
+            arguments,
+        )
+
+        result = await self.mcp_client.call_tool(name, arguments)
+
+        if result.is_error:
+            error_text = "\n".join(
+                item.text
+                for item in result.content
+                if hasattr(item, "text")
+            )
+            logger.error(
+                "MCP tool failed: name=%s error=%s",
+                name,
+                error_text,
+            )
+            return f"Tool execution failed: {error_text}"
+
+        return "\n".join(
+            item.text
+            for item in result.content
+            if hasattr(item, "text")
+        )
+
+
+    async def _run_with_tools(
+        self,
+        messages: list,
+        max_iterations: int = 5,
+    ):
+        """Let the model call tools until it produces a final answer."""
+        for iteration in range(max_iterations):
+            response = await self.model.ainvoke(messages)
+
+            if not response.tool_calls:
+                return response
+
+            messages.append(response)
+
+            for tool_call in response.tool_calls:
+                name = tool_call["name"]
+                arguments = tool_call["args"]
+                call_id = tool_call["id"]
+
+                if name == "handoff":
+                    logger.info(
+                        "GeneralEnquiry requested handoff: %s",
+                        arguments,
+                    )
+                    return response
+
+                try:
+                    tool_result = await self._execute_mcp_tool(
+                        name=name,
+                        arguments=arguments,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "MCP tool execution failed: %s",
+                        name,
+                    )
+                    tool_result = f"Tool execution failed: {exc}"
+
+                messages.append(
+                    ToolMessage(
+                        content=tool_result,
+                        tool_call_id=call_id,
+                    )
+                )
+
+            logger.info(
+                "Tool round completed: iteration=%d",
+                iteration + 1,
+            )
+
+        logger.warning(
+            "Maximum tool iterations reached: max_iterations=%d",
+            max_iterations,
+        )
+
+        return await self.model.ainvoke(messages)
+
+
+    async def initialize_tools(self) -> None:
+        """Discover MCP tools and bind them to the agent's models."""
+        # mcp_schemas = await self._get_mcp_tool_schemas()
+
+        allowed_tool_names = {
+            "web_search",
+            "web_search_with_content",
+        }
+
+        mcp_schemas = [
+            schema
+            for schema in await self._get_mcp_tool_schemas()
+            if schema["function"]["name"] in allowed_tool_names
+        ]
+
+        tool_schemas = [
+            handoff,
+            *mcp_schemas,
+        ]
+
+        self.model = self.model.bind_tools(
+            tool_schemas,
+            tool_choice="auto",
+        )
+
+        self.fallback_model = self.fallback_model.bind_tools(
+            tool_schemas,
+            tool_choice="auto",
+        )
+
+        self.thinking_model = self.thinking_model.bind_tools(
+            tool_schemas,
+            tool_choice="auto",
+        )
+
+        self.model_resilience = ModelResilience(
+            primary=self.model,
+            fallback=self.fallback_model,
+            inactivity_timeout_seconds=10.0,
+        )
+
+        logger.info(
+            "GeneralEnquiry initialized with tools: %s",
+            ["handoff", *[
+                schema["function"]["name"]
+                for schema in mcp_schemas
+            ]],
+        )
 
 
     async def run(
@@ -224,7 +367,24 @@ class GeneralEnquiry(BaseAgent):
                 full_chunk
             )
 
-            # Handle handoff before executing any other tools.
+            logger.info(
+                "GeneralEnquiry | Model response | content_length=%d | tool_calls=%s",
+                len(str(assistant_message.content or "")),
+                [
+                    {
+                        "name": call["name"],
+                        "arguments": call["args"],
+                    }
+                    for call in assistant_message.tool_calls
+                ],
+            )
+
+            if assistant_message.content:
+                logger.info(
+                    "GeneralEnquiry | Model content: %s",
+                    assistant_message.content,
+                )
+
             for tool_call in assistant_message.tool_calls:
                 if tool_call["name"] == "handoff":
                     logger.info(
@@ -239,7 +399,6 @@ class GeneralEnquiry(BaseAgent):
             # Preserve the assistant message, including its tool calls.
             messages.append(assistant_message)
 
-            # No tool calls means this is the final model response.
             if not assistant_message.tool_calls:
                 final_response = "".join(response_chunks)
 
@@ -249,37 +408,50 @@ class GeneralEnquiry(BaseAgent):
                     ]
                 }
 
-            # Execute requested tools and feed their results back
-            # into the conversation before invoking the model again.
             for tool_call in assistant_message.tool_calls:
                 tool_name = tool_call["name"]
                 tool_args = dict(tool_call["args"])
 
                 tool = self.available_tools.get(tool_name)
 
-                if tool is None:
-                    logger.warning(
-                        "Unknown tool requested: %s",
+                if tool is not None:
+                    if tool_name == "save_memory":
+                        tool_args["runtime"] = runtime
+
+                    logger.info(
+                        "GeneralEnquiry | Executing local tool: %s",
                         tool_name,
                     )
 
-                    messages.append(
-                        ToolMessage(
-                            content=f"Unknown tool: {tool_name}",
-                            tool_call_id=tool_call["id"],
-                        )
+                    result = await tool.ainvoke(tool_args)
+
+                elif tool_name in {
+                    "web_search",
+                    "web_search_with_content",
+                }:
+                    logger.info(
+                        "GeneralEnquiry | Executing MCP tool: %s",
+                        tool_name,
                     )
-                    continue
 
-                if tool_name == "save_memory":
-                    tool_args["runtime"] = runtime
+                    try:
+                        result = await self._execute_mcp_tool(
+                            name=tool_name,
+                            arguments=tool_args,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "GeneralEnquiry | MCP tool failed: %s",
+                            tool_name,
+                        )
+                        result = f"Tool execution failed: {tool_name}"
 
-                logger.info(
-                    "GeneralEnquiry executing tool: %s",
-                    tool_name,
-                )
-
-                result = await tool.ainvoke(tool_args)
+                else:
+                    logger.error(
+                        "GeneralEnquiry | Unknown tool requested: %s",
+                        tool_name,
+                    )
+                    result = f"Unknown tool: {tool_name}"
 
                 messages.append(
                     ToolMessage(
@@ -288,5 +460,3 @@ class GeneralEnquiry(BaseAgent):
                     )
                 )
 
-            # The next iteration calls the model again with
-            # the assistant tool calls and their results.
