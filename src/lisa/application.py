@@ -446,6 +446,7 @@ class LISA:
             fallback_model=self.fallback_model,
             thinking_model=self.thinking_model,
             system_prompt=general_enquiry_prompt,
+            mcp_client=self.mcp_client,
         )
 
         self.routing_policy = RoutingPolicy()
