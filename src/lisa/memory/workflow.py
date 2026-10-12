@@ -5,9 +5,11 @@ from uuid import UUID
 from langchain_core.messages import BaseMessage
 
 from lisa.agents.mem_agent import MemoryAgent
-from lisa.memory.decision import MemoryAction
+from lisa.memory.decision import MemoryAction, MemoryType
 from lisa.memory.models import Memory
 from lisa.memory.service import MemoryService
+from lisa.memory.user_context.models import UserPreference
+from lisa.memory.user_context.service import UserContextService
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +18,12 @@ class MemoryWorkflow:
             self,
             agent: MemoryAgent,
             service: MemoryService,
+            user_context_service: UserContextService,
     ) -> None:
         self.agent = agent
         self.service = service
+        self.user_context_service = user_context_service
+
 
     async def process(
             self,
@@ -50,6 +55,53 @@ class MemoryWorkflow:
                 "Checking memory decision: action=%r",
                 decision.action,
             )
+
+
+            if (
+                decision.type == MemoryType.PREFERENCE
+                and decision.action in (
+                    MemoryAction.SAVE,
+                    MemoryAction.UPDATE,
+                )
+            ):
+                if (
+                    decision.content is None
+                    or decision.preference_category is None
+                    or decision.preference_key is None
+                    or decision.preference_value is None
+                ):
+                    logger.warning(
+                        "Preference decision missing structured fields; "
+                        "skipping: category=%r, key=%r, content=%r",
+                        decision.preference_category,
+                        decision.preference_key,
+                        decision.content,
+                    )
+                    continue
+
+                preference = UserPreference(
+                    user_id=user_id,
+                    category=decision.preference_category,
+                    key=decision.preference_key,
+                    value=decision.preference_value,
+                )
+
+                saved_preference = (
+                    await self.user_context_service.upsert_preference(
+                        preference
+                    )
+                )
+
+                logger.info(
+                    "Preference persisted: user_id=%s, category=%s, "
+                    "key=%s, value=%r",
+                    user_id,
+                    saved_preference.category,
+                    saved_preference.key,
+                    saved_preference.value,
+                )
+                continue
+
 
             if decision.action == MemoryAction.UPDATE:
                 if decision.target_memory_id is None:
@@ -124,6 +176,15 @@ class MemoryWorkflow:
             if decision.action != MemoryAction.SAVE:
                 continue
 
+
+            # if (
+            #     decision.action == MemoryAction.SAVE
+            #     and decision.type == MemoryType.PREFERENCE
+            # ) and decision.content is None:
+            #     logger.warning("Preference decision has no content; skipping")
+            #     continue
+
+
             logger.info(
                 "Decision fields: content=%r, scope=%r, type=%r, source=%r, "
                 "confidence=%r, importance=%r",
@@ -144,7 +205,7 @@ class MemoryWorkflow:
                 continue
 
             now = datetime.now(UTC)
-            
+
             memory = Memory(
                 user_id=user_id,
                 scope=decision.scope,

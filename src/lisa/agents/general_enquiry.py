@@ -63,6 +63,11 @@ class GeneralEnquiry(BaseAgent):
         )
 
 
+        logger.warning(
+            "Building user context for user_id=%s",
+            runtime.context.user_id,
+        )
+        
         # Always load the user's structured profile and preferences.
         user_context = (
             await runtime.context.memory.user_context_service.build_context(
@@ -103,6 +108,16 @@ class GeneralEnquiry(BaseAgent):
             SystemMessage(content=system_content),
             *state["messages"],
         ]
+
+
+        logger.warning(
+            "\n========== GENERAL ENQUIRY: LLM INPUT ==========\n%s\n========== END LLM INPUT ==========",
+            "\n\n".join(
+                f"[{index}] {message.__class__.__name__}\n{message}"
+                for index, message in enumerate(messages)
+            ),
+        )
+
 
         writer = get_stream_writer()
 

@@ -113,6 +113,7 @@ class LISA:
                 workflow = MemoryWorkflow(
                     agent=self.memory_agent,
                     service=dependencies.service,
+                    user_context_service=dependencies.user_context_service
                 )
                 saved = await workflow.process(
                     user_id=user_id,

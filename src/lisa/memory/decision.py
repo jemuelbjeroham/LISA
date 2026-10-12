@@ -36,6 +36,28 @@ class MemoryDecision(BaseModel):
             "Only set when the decision updates a specific existing memory."
         ),
     )
+    preference_category: str | None = Field(
+        default=None,
+        description=(
+            "Category for a saved preference, such as communication "
+            "or response_style. Required when saving a preference."
+        ),
+    )
+    preference_key: str | None = Field(
+        default=None,
+        description=(
+            "Stable key identifying the preference, such as "
+            "preferred_name or explanation_format."
+        ),
+    )
+    preference_value: str | int | float | bool | list[str] | dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Structured value of the preference. Use a suitable "
+            "JSON-compatible value rather than a natural-language sentence."
+        ),
+    )
+
 
 class MemoryAgentResult(BaseModel):
     """The memory agent's decision for a conversation analysis"""
