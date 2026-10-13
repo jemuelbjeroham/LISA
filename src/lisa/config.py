@@ -36,6 +36,7 @@ class Settings(BaseSettings):
         "lisa_mcp_server.server",
     ]
     mcp_server_cwd: Path = Path("../lisa-mcp-server")
+    tavily_api_key: str = Field(validation_alias="TAVILY_API_KEY")
 
     #Database
     database_url: str = Field(validation_alias="LISA_DATABASE_URL")

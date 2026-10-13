@@ -1,3 +1,5 @@
+
+import os
 import asyncio
 import logging
 from contextlib import AsyncExitStack
@@ -404,6 +406,14 @@ class LISA:
                 command=settings.mcp_server_command,
                 args=settings.mcp_server_args,
                 cwd=settings.mcp_server_cwd,
+                env={
+                    **os.environ,
+                    **(
+                        {"TAVILY_API_KEY": settings.tavily_api_key}
+                        if settings.tavily_api_key
+                        else {}
+                    ),
+                }
             )
         )
 

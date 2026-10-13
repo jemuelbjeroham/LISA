@@ -1,3 +1,4 @@
+import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Self
@@ -7,8 +8,8 @@ from mcp.client.stdio import stdio_client
 
 
 class MCPClient:
-    def __init__(self, command: str, args: list[str], cwd: Path) -> None:
-        self.server_params = StdioServerParameters(command=command, args=args, cwd=str(cwd))
+    def __init__(self, command: str, args: list[str], cwd: Path, env: dict[str,str]) -> None:
+        self.server_params = StdioServerParameters(command=command, args=args, cwd=str(cwd), env=env or os.environ.copy())
         self.exit_stack = AsyncExitStack()
         self.session: ClientSession | None = None
 
