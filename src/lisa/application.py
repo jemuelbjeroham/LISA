@@ -1,13 +1,14 @@
 
-import os
 import asyncio
 import logging
+import os
 from contextlib import AsyncExitStack
 from typing import Self
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage
+from openai import AsyncOpenAI
 
 from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.mem_agent import MemoryAgent
@@ -16,6 +17,10 @@ from lisa.config import Settings
 from lisa.context import LISAContext
 from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
+from lisa.guardrails.output_moderation import (
+    BufferedOutputModerator,
+    OpenAIOutputModerator,
+)
 from lisa.infrastructure.postgres.database import Database
 from lisa.infrastructure.postgres.memory_dependencies import (
     memory_dependencies,
@@ -58,6 +63,7 @@ class LISA:
         self.graph = None
         self.mcp_client: MCPClient | None = None
         self.database: Database | None = None
+        self.output_moderator = None
         if conversation_store is None:
             raise ValueError("conversation_store must be provided")
         self.conversation_store = conversation_store
@@ -350,6 +356,15 @@ class LISA:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
         settings = Settings()
 
+        moderation_client = AsyncOpenAI(
+            api_key=settings.openai_token,
+        )
+
+        self.output_moderator = BufferedOutputModerator(
+            moderator=OpenAIOutputModerator(moderation_client),
+            max_buffer_chars=200,
+        )
+        
         self.database = Database(settings)
         self.exit_stack.push_async_callback(self.database.close)
 

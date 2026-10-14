@@ -15,6 +15,7 @@ dependencies = [
     "langchain-openai>=1.6.1",
     "langgraph>=1.2.11",
     "mcp>=2.1.1",
+    "openai>=3.9.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.15.0",
     "pytest>=9.1.1",
