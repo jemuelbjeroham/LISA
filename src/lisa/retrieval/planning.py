@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 
 class RetrievalDecision(BaseModel):
+    use_rag: bool
     retrieval_query: str
     use_hyde: bool
     reasoning: str
-
 
 class RetrievalPlanner:
 
