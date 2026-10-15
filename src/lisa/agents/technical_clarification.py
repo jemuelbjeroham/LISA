@@ -4,12 +4,15 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from jsonschema import ValidationError, validate
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
     HumanMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_core.messages.utils import message_chunk_to_message
 from langgraph.config import get_stream_writer
@@ -24,10 +27,27 @@ from lisa.retrieval.planning import RetrievalPlanner
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
 
+
 logger = logging.getLogger(__name__)
 
 MAX_LLM_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 0.5
+
+MAX_HANDOFF_CORRECTION_ATTEMPTS = 2
+
+LOCAL_TOOL_ALLOWLIST = frozenset({"handoff"})
+
+HANDOFF_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reason": {
+            "type": "string",
+            "minLength": 1,
+        },
+    },
+    "required": ["reason"],
+    "additionalProperties": False,
+}
 
 SAFE_ERROR_MESSAGE = (
     "I'm sorry, but I couldn't complete that request right now. "
@@ -39,6 +59,10 @@ MODERATION_BLOCKED_MESSAGE = (
     "it did not pass our safety checks. Please try rephrasing "
     "your request."
 )
+
+
+class HandoffArgumentsValidationError(ValueError):
+    """Raised when a handoff tool call has invalid arguments."""
 
 
 class TechnicalClarificationAgent(BaseAgent):
@@ -63,6 +87,35 @@ class TechnicalClarificationAgent(BaseAgent):
         self.retrieval_planner = retrieval_planner
         self.output_moderator = output_moderator
 
+    @staticmethod
+    def _validate_handoff_arguments(arguments: Any) -> dict[str, str]:
+        """Validate handoff arguments before allowing a graph handoff."""
+        if not isinstance(arguments, dict):
+            raise HandoffArgumentsValidationError(
+                "Handoff arguments must be a JSON object containing "
+                "a non-empty 'reason' string."
+            )
+
+        try:
+            validate(instance=arguments, schema=HANDOFF_SCHEMA)
+        except ValidationError as exc:
+            logger.warning(
+                "Invalid handoff arguments: path=%s error=%s",
+                list(exc.absolute_path),
+                exc.message,
+            )
+            raise HandoffArgumentsValidationError(
+                f"Invalid handoff arguments: {exc.message}. "
+                "Provide only a non-empty 'reason' string."
+            ) from exc
+
+        if not arguments["reason"].strip():
+            raise HandoffArgumentsValidationError(
+                "The handoff reason must not contain only whitespace."
+            )
+
+        return arguments
+
     async def run(self, state: LISAState) -> dict[str, Any]:
         """Execute one technical clarification turn with bounded retries."""
         messages = state.get("messages", [])
@@ -83,7 +136,9 @@ class TechnicalClarificationAgent(BaseAgent):
         user_query = user_message.content
 
         if not isinstance(user_query, str) or not user_query.strip():
-            logger.warning("Technical clarification received an empty or non-text query.")
+            logger.warning(
+                "Technical clarification received an empty or non-text query."
+            )
             return self._error_result()
 
         logger.info(
@@ -91,13 +146,18 @@ class TechnicalClarificationAgent(BaseAgent):
             len(user_query),
         )
 
+        knowledge: list[str] = []
+
         try:
             # Step 1: Determine whether this request belongs to this agent.
-            handoff = await self._check_scope(user_query, messages)
+            handoff_arguments = await self._check_scope(
+                user_query,
+                messages,
+            )
 
-            if handoff is not None:
+            if handoff_arguments is not None:
                 logger.info("Technical clarification handing off request.")
-                return {"agent_handoff": handoff}
+                return {"agent_handoff": handoff_arguments}
 
             # Step 2: Decide whether retrieval is necessary.
             retrieval_decision = await self._retry_async(
@@ -109,7 +169,6 @@ class TechnicalClarificationAgent(BaseAgent):
             retrieval_query = (
                 retrieval_decision.retrieval_query or user_query
             ).strip()
-            knowledge: list[str] = []
 
             logger.info(
                 "Retrieval strategy selected: use_rag=%s use_hyde=%s",
@@ -122,21 +181,30 @@ class TechnicalClarificationAgent(BaseAgent):
                 retrieval_input = retrieval_query or user_query
 
                 if retrieval_decision.use_hyde:
-                    retrieval_input = await self._generate_hypothetical_document(
-                        retrieval_input
+                    retrieval_input = (
+                        await self._generate_hypothetical_document(
+                            retrieval_input
+                        )
                     )
 
                 try:
+                    # The retriever owns the retrieval implementation.
+                    # In the current application, it is backed by MCP.
                     retrieved = await self._retry_async(
                         operation="knowledge retrieval",
                         call=lambda: self.retriever.retrieve(retrieval_input),
                     )
+
                     knowledge = [
-                        item for item in retrieved if isinstance(item, str)
+                        item for item in retrieved
+                        if isinstance(item, str)
                     ]
+
+                except asyncio.CancelledError:
+                    raise
+
                 except Exception:
                     # Retrieval failure should not crash the entire graph.
-                    # The response prompt will explicitly disclose the gap.
                     logger.exception(
                         "Knowledge retrieval failed after retries."
                     )
@@ -146,6 +214,7 @@ class TechnicalClarificationAgent(BaseAgent):
                     "Knowledge retrieval completed: chunks=%d",
                     len(knowledge),
                 )
+
             else:
                 logger.info(
                     "Skipping RAG: %s",
@@ -163,6 +232,7 @@ class TechnicalClarificationAgent(BaseAgent):
                     f"{knowledge_context}\n"
                     "</retrieved_knowledge>"
                 )
+
             elif use_rag:
                 evidence_section = (
                     "A knowledge-base search was attempted but returned no "
@@ -172,6 +242,7 @@ class TechnicalClarificationAgent(BaseAgent):
                     "from verified internal facts. If the question requires "
                     "internal evidence, acknowledge the limitation."
                 )
+
             else:
                 evidence_section = (
                     "Knowledge-base retrieval was deliberately skipped "
@@ -204,31 +275,22 @@ class TechnicalClarificationAgent(BaseAgent):
 
             prompt_messages = [system_message, *messages]
 
-            # Step 5: Collect a complete response before emitting user-facing
-            # content. This avoids leaking partial output if a retry is needed
-            # or moderation blocks the response.
-            assistant_message = await self._generate_response_with_retries(
-                prompt_messages
+            # Step 5: Generate a complete response and validate any handoff.
+            # No answer content is emitted until moderation succeeds.
+            assistant_message, handoff_arguments = (
+                await self._generate_response_with_tool_corrections(
+                    prompt_messages
+                )
             )
 
-            # Inspect complete tool calls rather than partial stream fragments.
-            for tool_call in assistant_message.tool_calls:
-                if tool_call.get("name") == "handoff":
-                    args = tool_call.get("args")
-
-                    if not isinstance(args, dict):
-                        logger.warning(
-                            "Ignoring malformed handoff tool arguments."
-                        )
-                        continue
-
-                    logger.info(
-                        "Technical clarification requested a handoff."
-                    )
-                    return {
-                        "agent_handoff": args,
-                        "knowledge_context": knowledge,
-                    }
+            if handoff_arguments is not None:
+                logger.info(
+                    "Technical clarification requested a validated handoff."
+                )
+                return {
+                    "agent_handoff": handoff_arguments,
+                    "knowledge_context": knowledge,
+                }
 
             response_text = self._extract_text(assistant_message.content)
 
@@ -254,6 +316,9 @@ class TechnicalClarificationAgent(BaseAgent):
                     "Technical clarification response blocked by moderation."
                 )
                 return self._moderation_result(knowledge)
+
+            except asyncio.CancelledError:
+                raise
 
             except Exception:
                 # Fail closed: never send unmoderated model output.
@@ -288,22 +353,24 @@ class TechnicalClarificationAgent(BaseAgent):
             }
 
         except asyncio.CancelledError:
-            # Preserve task cancellation; do not turn it into a normal answer.
+            # Preserve task cancellation.
             raise
 
         except Exception:
             logger.exception(
                 "Technical clarification failed after recovery attempts."
             )
-            return self._error_result()
+            return self._error_result(knowledge)
 
     async def _retry_async(self, operation: str, call: Any) -> Any:
         """Retry an async operation a bounded number of times."""
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
             try:
                 return await call()
+
             except asyncio.CancelledError:
                 raise
+
             except Exception:
                 logger.exception(
                     "%s failed: attempt=%d/%d",
@@ -318,6 +385,84 @@ class TechnicalClarificationAgent(BaseAgent):
         raise RuntimeError(
             f"{operation} failed after {MAX_LLM_ATTEMPTS} attempts."
         )
+
+    async def _generate_response_with_tool_corrections(
+        self,
+        messages: list,
+    ) -> tuple[AIMessage, dict[str, str] | None]:
+        """
+        Generate a complete response and validate requested tools.
+
+        Only handoff is permitted. Invalid or unauthorized tool calls receive
+        feedback, with at most two correction attempts. No tool is executed
+        by this method.
+        """
+        correction_attempts = 0
+
+        while True:
+            assistant_message = await self._generate_response_with_retries(
+                messages
+            )
+
+            if not assistant_message.tool_calls:
+                return assistant_message, None
+
+            # Preserve the model's tool-call message so each ToolMessage
+            # can correctly refer to its tool_call_id.
+            messages.append(assistant_message)
+
+            for tool_call in assistant_message.tool_calls:
+                tool_name = tool_call.get("name")
+                call_id = tool_call.get("id", "")
+                arguments = tool_call.get("args")
+
+                if tool_name not in LOCAL_TOOL_ALLOWLIST:
+                    correction_attempts += 1
+                    logger.warning(
+                        "Blocked unauthorized technical tool: %s",
+                        tool_name,
+                    )
+
+                    feedback = (
+                        f"Tool '{tool_name}' is not authorized for "
+                        "TechnicalClarificationAgent. Do not call it again."
+                    )
+
+                else:
+                    try:
+                        validated_arguments = (
+                            self._validate_handoff_arguments(arguments)
+                        )
+
+                        return assistant_message, validated_arguments
+
+                    except HandoffArgumentsValidationError as exc:
+                        correction_attempts += 1
+                        feedback = (
+                            f"{exc} This tool call was not executed. "
+                            "Correct the arguments and try again."
+                        )
+
+                if correction_attempts > MAX_HANDOFF_CORRECTION_ATTEMPTS:
+                    logger.warning(
+                        "Stopping after invalid or unauthorized tool calls: "
+                        "correction_attempts=%d",
+                        correction_attempts,
+                    )
+
+                    return (
+                        AIMessage(content=SAFE_ERROR_MESSAGE),
+                        None,
+                    )
+
+                messages.append(
+                    ToolMessage(
+                        content=feedback,
+                        tool_call_id=call_id,
+                    )
+                )
+
+            # Ask the model again with the validation feedback.
 
     async def _generate_response_with_retries(
         self,
@@ -385,13 +530,19 @@ class TechnicalClarificationAgent(BaseAgent):
                 operation="HyDE generation",
                 call=lambda: self.hyde_model.ainvoke(messages),
             )
+
+        except asyncio.CancelledError:
+            raise
+
         except Exception:
             logger.exception(
                 "HyDE failed after retries; using the original query."
             )
             return retrieval_query
 
-        hypothetical_document = self._extract_text(response.content).strip()
+        hypothetical_document = self._extract_text(
+            response.content
+        ).strip()
 
         if not hypothetical_document:
             logger.warning(
@@ -405,8 +556,8 @@ class TechnicalClarificationAgent(BaseAgent):
         self,
         user_query: str,
         conversation_messages: list,
-    ) -> dict | None:
-        """Check whether this request belongs to the technical agent."""
+    ) -> dict[str, str] | None:
+        """Check scope and validate handoff arguments before routing."""
         scope_prompt = (
             f"{self.system_prompt}\n\n"
             "Scope-check instructions:\n"
@@ -414,8 +565,9 @@ class TechnicalClarificationAgent(BaseAgent):
             "technical clarification agent. Use conversation history to "
             "interpret follow-up questions. If the request is clearly "
             "outside this agent's responsibilities, call the handoff tool "
-            "with appropriate routing details. If it is within scope, do "
-            "not call handoff. Do not answer the question during this check."
+            "with exactly one non-empty 'reason' string. If it is within "
+            "scope, do not call handoff. Do not answer the question during "
+            "this check."
         )
 
         messages = [
@@ -428,25 +580,84 @@ class TechnicalClarificationAgent(BaseAgent):
                 operation="scope check",
                 call=lambda: self.model.ainvoke(messages),
             )
+
+        except asyncio.CancelledError:
+            raise
+
         except Exception:
             # Avoid routing failure crashing the whole workflow.
-            # Continuing is safer than an unvalidated handoff decision.
+            # Continuing is safer than accepting an unvalidated handoff.
             logger.exception(
-                "Scope check failed after retries; continuing in technical agent."
+                "Scope check failed after retries; continuing in "
+                "technical agent."
             )
             return None
 
-        for tool_call in getattr(response, "tool_calls", []):
-            if tool_call.get("name") != "handoff":
-                continue
+        correction_attempts = 0
 
-            args = tool_call.get("args")
-            if isinstance(args, dict):
-                return args
+        while True:
+            tool_calls = getattr(response, "tool_calls", [])
 
-            logger.warning("Ignoring malformed scope-check handoff arguments.")
+            if not tool_calls:
+                return None
 
-        return None
+            messages.append(response)
+
+            for tool_call in tool_calls:
+                tool_name = tool_call.get("name")
+                call_id = tool_call.get("id", "")
+                arguments = tool_call.get("args")
+
+                if tool_name not in LOCAL_TOOL_ALLOWLIST:
+                    correction_attempts += 1
+                    logger.warning(
+                        "Blocked unauthorized tool during scope check: %s",
+                        tool_name,
+                    )
+                    feedback = (
+                        f"Tool '{tool_name}' is not authorized. "
+                        "Do not call it again."
+                    )
+
+                else:
+                    try:
+                        return self._validate_handoff_arguments(arguments)
+
+                    except HandoffArgumentsValidationError as exc:
+                        correction_attempts += 1
+                        feedback = (
+                            f"{exc} The handoff was not accepted. "
+                            "Correct the arguments and try again."
+                        )
+
+                if correction_attempts > MAX_HANDOFF_CORRECTION_ATTEMPTS:
+                    logger.warning(
+                        "Scope check stopped after invalid tool calls."
+                    )
+                    return None
+
+                messages.append(
+                    ToolMessage(
+                        content=feedback,
+                        tool_call_id=call_id,
+                    )
+                )
+
+            try:
+                response = await self._retry_async(
+                    operation="scope-check correction",
+                    call=lambda: self.model.ainvoke(messages),
+                )
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception(
+                    "Scope-check correction failed; continuing in "
+                    "technical agent."
+                )
+                return None
 
     @staticmethod
     async def _text_chunks(text: str) -> AsyncIterator[str]:
@@ -462,13 +673,16 @@ class TechnicalClarificationAgent(BaseAgent):
 
         if isinstance(content, list):
             parts: list[str] = []
+
             for item in content:
                 if isinstance(item, str):
                     parts.append(item)
+
                 elif isinstance(item, dict):
                     text = item.get("text")
                     if isinstance(text, str):
                         parts.append(text)
+
             return "".join(parts)
 
         return ""
