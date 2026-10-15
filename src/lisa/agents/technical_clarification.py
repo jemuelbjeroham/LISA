@@ -1,11 +1,9 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
 from typing import Any
 
 from jsonschema import ValidationError, validate
-
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -18,15 +16,16 @@ from langchain_core.messages.utils import message_chunk_to_message
 from langgraph.config import get_stream_writer
 
 from lisa.agents.base import BaseAgent
-from lisa.guardrails.output_moderation import (
-    BufferedOutputModerator,
-    OutputModerationBlocked,
+from lisa.guardrails.input_moderation import (
+    INPUT_BLOCKED_MESSAGE,
+    INPUT_MODERATION_ERROR_MESSAGE,
+    InputModerationUnavailable,
+    InputModerator,
 )
 from lisa.knowledge.protocol import KnowledgeRetriever
 from lisa.retrieval.planning import RetrievalPlanner
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
-
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +33,7 @@ MAX_LLM_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 0.5
 
 MAX_HANDOFF_CORRECTION_ATTEMPTS = 2
+MAX_HANDOFF_REASON_LENGTH = 2000
 
 LOCAL_TOOL_ALLOWLIST = frozenset({"handoff"})
 
@@ -43,6 +43,7 @@ HANDOFF_SCHEMA = {
         "reason": {
             "type": "string",
             "minLength": 1,
+            "maxLength": MAX_HANDOFF_REASON_LENGTH,
         },
     },
     "required": ["reason"],
@@ -55,9 +56,8 @@ SAFE_ERROR_MESSAGE = (
 )
 
 MODERATION_BLOCKED_MESSAGE = (
-    "I'm sorry, but this response could not be delivered because "
-    "it did not pass our safety checks. Please try rephrasing "
-    "your request."
+    "I'm sorry, but I can't help with that request. "
+    "Please rephrase your message and try again."
 )
 
 
@@ -73,7 +73,7 @@ class TechnicalClarificationAgent(BaseAgent):
         hyde_prompt: str,
         retriever: KnowledgeRetriever,
         retrieval_planner: RetrievalPlanner,
-        output_moderator: BufferedOutputModerator,
+        input_moderator: InputModerator,
     ) -> None:
         super().__init__(
             model=model,
@@ -85,10 +85,12 @@ class TechnicalClarificationAgent(BaseAgent):
         self.hyde_prompt = hyde_prompt
         self.retriever = retriever
         self.retrieval_planner = retrieval_planner
-        self.output_moderator = output_moderator
+        self.input_moderator = input_moderator
 
     @staticmethod
-    def _validate_handoff_arguments(arguments: Any) -> dict[str, str]:
+    def _validate_handoff_arguments(
+        arguments: Any,
+    ) -> dict[str, str]:
         """Validate handoff arguments before allowing a graph handoff."""
         if not isinstance(arguments, dict):
             raise HandoffArgumentsValidationError(
@@ -109,20 +111,73 @@ class TechnicalClarificationAgent(BaseAgent):
                 "Provide only a non-empty 'reason' string."
             ) from exc
 
-        if not arguments["reason"].strip():
+        reason = arguments["reason"].strip()
+
+        if not reason:
             raise HandoffArgumentsValidationError(
                 "The handoff reason must not contain only whitespace."
             )
 
-        return arguments
+        return {"reason": reason}
+
+    async def _moderate_input(
+        self,
+        user_query: str,
+    ) -> tuple[bool, str | None]:
+        """
+        Moderate the user's text before any agent workflow begins.
+
+        Returns:
+            A tuple of (blocked, response_message).
+        """
+        try:
+            result = await self.input_moderator.moderate(user_query)
+
+        except InputModerationUnavailable:
+            logger.exception(
+                "Technical clarification input moderation is unavailable."
+            )
+            return True, INPUT_MODERATION_ERROR_MESSAGE
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            logger.exception(
+                "Unexpected technical clarification input moderation error."
+            )
+            return True, INPUT_MODERATION_ERROR_MESSAGE
+
+        if result.flagged:
+            logger.warning(
+                "Technical clarification input blocked: categories=%s",
+                getattr(result, "categories", ()),
+            )
+            return True, INPUT_BLOCKED_MESSAGE
+
+        return False, None
+
+    @staticmethod
+    def _emit_content(writer: Any, content: str) -> None:
+        """Emit a non-empty content event to the client."""
+        if content:
+            writer(
+                StreamEvent(
+                    type="content",
+                    content=content,
+                )
+            )
 
     async def run(self, state: LISAState) -> dict[str, Any]:
         """Execute one technical clarification turn with bounded retries."""
+        writer = get_stream_writer()
         messages = state.get("messages", [])
 
         if not messages:
             logger.error("Technical clarification received no messages.")
-            return self._error_result()
+            error_result = self._error_result()
+            self._emit_content(writer, SAFE_ERROR_MESSAGE)
+            return error_result
 
         user_message = messages[-1]
 
@@ -131,7 +186,9 @@ class TechnicalClarificationAgent(BaseAgent):
                 "Expected HumanMessage, received %s.",
                 type(user_message).__name__,
             )
-            return self._error_result()
+            error_result = self._error_result()
+            self._emit_content(writer, SAFE_ERROR_MESSAGE)
+            return error_result
 
         user_query = user_message.content
 
@@ -139,27 +196,46 @@ class TechnicalClarificationAgent(BaseAgent):
             logger.warning(
                 "Technical clarification received an empty or non-text query."
             )
-            return self._error_result()
+            error_result = self._error_result()
+            self._emit_content(writer, SAFE_ERROR_MESSAGE)
+            return error_result
+
+        user_query = user_query.strip()
 
         logger.info(
             "Technical clarification started: query_length=%d",
             len(user_query),
         )
 
+        # Step 1: Moderate user input BEFORE scope checking, planning,
+        # HyDE generation, retrieval, or model response generation.
+        blocked, moderation_message = await self._moderate_input(user_query)
+
+        if blocked:
+            response = moderation_message or INPUT_MODERATION_ERROR_MESSAGE
+            self._emit_content(writer, response)
+
+            return {
+                "messages": [AIMessage(content=response)],
+                "knowledge_context": [],
+            }
+
         knowledge: list[str] = []
 
         try:
-            # Step 1: Determine whether this request belongs to this agent.
+            # Step 2: Determine whether this request belongs to this agent.
             handoff_arguments = await self._check_scope(
                 user_query,
                 messages,
             )
 
             if handoff_arguments is not None:
-                logger.info("Technical clarification handing off request.")
+                logger.info(
+                    "Technical clarification handing off request."
+                )
                 return {"agent_handoff": handoff_arguments}
 
-            # Step 2: Decide whether retrieval is necessary.
+            # Step 3: Decide whether retrieval is necessary.
             retrieval_decision = await self._retry_async(
                 operation="retrieval planning",
                 call=lambda: self.retrieval_planner.plan(messages),
@@ -176,7 +252,7 @@ class TechnicalClarificationAgent(BaseAgent):
                 retrieval_decision.use_hyde,
             )
 
-            # Step 3: Retrieve knowledge only when requested by the planner.
+            # Step 4: Retrieve knowledge only when requested by the planner.
             if use_rag:
                 retrieval_input = retrieval_query or user_query
 
@@ -196,7 +272,8 @@ class TechnicalClarificationAgent(BaseAgent):
                     )
 
                     knowledge = [
-                        item for item in retrieved
+                        item
+                        for item in retrieved
                         if isinstance(item, str)
                     ]
 
@@ -204,7 +281,6 @@ class TechnicalClarificationAgent(BaseAgent):
                     raise
 
                 except Exception:
-                    # Retrieval failure should not crash the entire graph.
                     logger.exception(
                         "Knowledge retrieval failed after retries."
                     )
@@ -221,7 +297,7 @@ class TechnicalClarificationAgent(BaseAgent):
                     retrieval_decision.reasoning,
                 )
 
-            # Step 4: Construct a grounded prompt.
+            # Step 5: Construct a grounded prompt.
             knowledge_context = "\n\n".join(knowledge)
 
             if use_rag and knowledge_context.strip():
@@ -275,11 +351,12 @@ class TechnicalClarificationAgent(BaseAgent):
 
             prompt_messages = [system_message, *messages]
 
-            # Step 5: Generate a complete response and validate any handoff.
-            # No answer content is emitted until moderation succeeds.
+            # Step 6: Generate a response. Ordinary answer chunks are streamed
+            # as they arrive; no output-moderation buffer is used.
             assistant_message, handoff_arguments = (
                 await self._generate_response_with_tool_corrections(
-                    prompt_messages
+                    prompt_messages,
+                    writer=writer,
                 )
             )
 
@@ -292,63 +369,25 @@ class TechnicalClarificationAgent(BaseAgent):
                     "knowledge_context": knowledge,
                 }
 
-            response_text = self._extract_text(assistant_message.content)
+            response_text = self._extract_text(
+                assistant_message.content
+            )
 
             if not response_text.strip():
-                logger.warning("Model returned an empty technical response.")
-                return self._error_result(knowledge)
-
-            # Step 6: Moderate the complete response before sending it.
-            try:
-                approved_chunks: list[str] = []
-
-                async for approved_text in (
-                    self.output_moderator.filter_stream(
-                        self._text_chunks(response_text)
-                    )
-                ):
-                    approved_chunks.append(approved_text)
-
-                final_response = "".join(approved_chunks)
-
-            except OutputModerationBlocked:
                 logger.warning(
-                    "Technical clarification response blocked by moderation."
+                    "Model returned an empty technical response."
                 )
-                return self._moderation_result(knowledge)
-
-            except asyncio.CancelledError:
-                raise
-
-            except Exception:
-                # Fail closed: never send unmoderated model output.
-                logger.exception(
-                    "Technical clarification moderation service failed."
-                )
-                return self._moderation_result(knowledge)
-
-            if not final_response.strip():
-                logger.warning(
-                    "Output moderation produced an empty response."
-                )
-                return self._error_result(knowledge)
-
-            # Only emit content after the entire response passes moderation.
-            writer = get_stream_writer()
-            writer(
-                StreamEvent(
-                    type="content",
-                    content=final_response,
-                )
-            )
+                error_result = self._error_result(knowledge)
+                self._emit_content(writer, SAFE_ERROR_MESSAGE)
+                return error_result
 
             logger.info(
                 "Technical clarification completed: response_length=%d",
-                len(final_response),
+                len(response_text),
             )
 
             return {
-                "messages": [AIMessage(content=final_response)],
+                "messages": [AIMessage(content=response_text)],
                 "knowledge_context": knowledge,
             }
 
@@ -360,7 +399,10 @@ class TechnicalClarificationAgent(BaseAgent):
             logger.exception(
                 "Technical clarification failed after recovery attempts."
             )
-            return self._error_result(knowledge)
+
+            error_result = self._error_result(knowledge)
+            self._emit_content(writer, SAFE_ERROR_MESSAGE)
+            return error_result
 
     async def _retry_async(self, operation: str, call: Any) -> Any:
         """Retry an async operation a bounded number of times."""
@@ -389,26 +431,31 @@ class TechnicalClarificationAgent(BaseAgent):
     async def _generate_response_with_tool_corrections(
         self,
         messages: list,
+        writer: Any,
     ) -> tuple[AIMessage, dict[str, str] | None]:
         """
-        Generate a complete response and validate requested tools.
+        Generate a response and validate any requested tool calls.
 
         Only handoff is permitted. Invalid or unauthorized tool calls receive
-        feedback, with at most two correction attempts. No tool is executed
-        by this method.
+        feedback, with at most two correction attempts. This method does not
+        execute tools.
+
+        Answer text is streamed as model chunks arrive. Tool calls are
+        inspected after the model stream completes.
         """
         correction_attempts = 0
 
         while True:
             assistant_message = await self._generate_response_with_retries(
-                messages
+                messages,
+                writer=writer,
             )
 
             if not assistant_message.tool_calls:
                 return assistant_message, None
 
             # Preserve the model's tool-call message so each ToolMessage
-            # can correctly refer to its tool_call_id.
+            # correctly refers to its tool_call_id.
             messages.append(assistant_message)
 
             for tool_call in assistant_message.tool_calls:
@@ -418,6 +465,7 @@ class TechnicalClarificationAgent(BaseAgent):
 
                 if tool_name not in LOCAL_TOOL_ALLOWLIST:
                     correction_attempts += 1
+
                     logger.warning(
                         "Blocked unauthorized technical tool: %s",
                         tool_name,
@@ -433,7 +481,6 @@ class TechnicalClarificationAgent(BaseAgent):
                         validated_arguments = (
                             self._validate_handoff_arguments(arguments)
                         )
-
                         return assistant_message, validated_arguments
 
                     except HandoffArgumentsValidationError as exc:
@@ -450,10 +497,7 @@ class TechnicalClarificationAgent(BaseAgent):
                         correction_attempts,
                     )
 
-                    return (
-                        AIMessage(content=SAFE_ERROR_MESSAGE),
-                        None,
-                    )
+                    return AIMessage(content=SAFE_ERROR_MESSAGE), None
 
                 messages.append(
                     ToolMessage(
@@ -462,15 +506,23 @@ class TechnicalClarificationAgent(BaseAgent):
                     )
                 )
 
-            # Ask the model again with the validation feedback.
+            # Ask the model again with validation feedback.
 
     async def _generate_response_with_retries(
         self,
         messages: list,
+        writer: Any,
     ) -> AIMessage:
-        """Generate a complete assistant message, retrying failed streams."""
+        """
+        Generate one assistant message with bounded retries.
+
+        Text is emitted incrementally. If streaming fails after text has
+        already been delivered, the generation is not retried because that
+        could duplicate visible content.
+        """
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
             full_chunk: AIMessageChunk | None = None
+            emitted_text = False
 
             try:
                 async for chunk in self.model.astream(messages):
@@ -481,10 +533,27 @@ class TechnicalClarificationAgent(BaseAgent):
                         )
                         continue
 
-                    if full_chunk is None:
-                        full_chunk = chunk
-                    else:
-                        full_chunk = full_chunk + chunk
+                    full_chunk = (
+                        chunk
+                        if full_chunk is None
+                        else full_chunk + chunk
+                    )
+
+                    reasoning = chunk.additional_kwargs.get(
+                        "reasoning_content"
+                    )
+
+                    if reasoning:
+                        writer(
+                            StreamEvent(
+                                type="reasoning",
+                                content=reasoning,
+                            )
+                        )
+
+                    if isinstance(chunk.content, str) and chunk.content:
+                        self._emit_content(writer, chunk.content)
+                        emitted_text = True
 
                 if full_chunk is None:
                     raise ValueError("Model returned an empty stream.")
@@ -507,6 +576,12 @@ class TechnicalClarificationAgent(BaseAgent):
                     attempt,
                     MAX_LLM_ATTEMPTS,
                 )
+
+                if emitted_text:
+                    raise RuntimeError(
+                        "Response generation failed after streaming began; "
+                        "the request will not be retried to avoid duplicates."
+                    )
 
                 if attempt < MAX_LLM_ATTEMPTS:
                     await asyncio.sleep(RETRY_DELAY_SECONDS * attempt)
@@ -585,7 +660,7 @@ class TechnicalClarificationAgent(BaseAgent):
             raise
 
         except Exception:
-            # Avoid routing failure crashing the whole workflow.
+            # Avoid routing failure crashing the workflow.
             # Continuing is safer than accepting an unvalidated handoff.
             logger.exception(
                 "Scope check failed after retries; continuing in "
@@ -610,10 +685,12 @@ class TechnicalClarificationAgent(BaseAgent):
 
                 if tool_name not in LOCAL_TOOL_ALLOWLIST:
                     correction_attempts += 1
+
                     logger.warning(
                         "Blocked unauthorized tool during scope check: %s",
                         tool_name,
                     )
+
                     feedback = (
                         f"Tool '{tool_name}' is not authorized. "
                         "Do not call it again."
@@ -660,12 +737,6 @@ class TechnicalClarificationAgent(BaseAgent):
                 return None
 
     @staticmethod
-    async def _text_chunks(text: str) -> AsyncIterator[str]:
-        """Adapt complete text to the moderator's async-stream interface."""
-        if text:
-            yield text
-
-    @staticmethod
     def _extract_text(content: Any) -> str:
         """Extract text from common chat-model content representations."""
         if isinstance(content, str):
@@ -694,15 +765,5 @@ class TechnicalClarificationAgent(BaseAgent):
         """Return a safe LangGraph state update instead of crashing the graph."""
         return {
             "messages": [AIMessage(content=SAFE_ERROR_MESSAGE)],
-            "knowledge_context": knowledge or [],
-        }
-
-    @staticmethod
-    def _moderation_result(
-        knowledge: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Return a safe response when moderation blocks or fails."""
-        return {
-            "messages": [AIMessage(content=MODERATION_BLOCKED_MESSAGE)],
             "knowledge_context": knowledge or [],
         }
