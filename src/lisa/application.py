@@ -188,6 +188,7 @@ class LISA:
 
                 result = await self.graph.ainvoke(
                     state,
+                    config={"recursion_limit": 12},
                     context=context,
                 )
         except Exception:
@@ -248,9 +249,11 @@ class LISA:
                 "agent_handoff": None,
                 "knowledge_context": [],
                 "enable_thinking": enable_thinking,
+                "handoff_count": 0,
             }
         else:
             state["enable_thinking"] = enable_thinking
+            state["handoff_count"] = 0
 
         state["messages"].append(
             HumanMessage(content=message)
@@ -268,7 +271,7 @@ class LISA:
                     user_id=user_id,
                     memory=memory_dependencies(session),
                 )
-                async for mode, chunk in self.graph.astream(state, context=context, stream_mode=["custom", "values"]):
+                async for mode, chunk in self.graph.astream(state, config={"recursion_limit": 12}, context=context, stream_mode=["custom", "values"]):
 
                     if mode == "custom":
 

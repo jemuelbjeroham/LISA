@@ -1,6 +1,8 @@
+
 import logging
 from functools import partial
 
+from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 
 from lisa.agents.general_enquiry import GeneralEnquiry
@@ -12,42 +14,83 @@ from lisa.state import LISAState
 
 logger = logging.getLogger(__name__)
 
-def route_entry(state: LISAState, routing_policy: RoutingPolicy) -> str:
+MAX_HANDOFFS = 3
 
-    action = routing_policy.decide(
-        state["active_route"]
-    )
+
+def route_entry(state: LISAState, routing_policy: RoutingPolicy) -> str:
+    action = routing_policy.decide(state["active_route"])
 
     if action == RoutingAction.CONTINUE:
         return state["active_route"].value
 
     return "orchestrator"
-    
+
+
 def route_from_state(state: LISAState) -> Route:
     return state["route"]
 
-def route_from_agent(state: LISAState) -> str:
+
+def record_handoff(state: LISAState) -> dict:
+    handoff = state.get("agent_handoff")
+
+    if handoff is None:
+        return {"handoff_count": state.get("handoff_count", 0)}
+
+    count = state.get("handoff_count", 0) + 1
+
     logger.info(
-        "ROUTE FROM AGENT: agent_handoff=%s route=%s active_route=%s",
-        state.get("agent_handoff"),
-        state.get("route"),
-        state.get("active_route"),
+        "Agent handoff recorded: count=%d limit=%d handoff=%s",
+        count,
+        MAX_HANDOFFS,
+        handoff,
     )
-    if state["agent_handoff"] is not None:
+
+    if count > MAX_HANDOFFS:
+        logger.warning(
+            "Maximum handoff count exceeded; stopping routing."
+        )
+
+        return {
+            "handoff_count": count,
+            "agent_handoff": None,
+            "messages": [
+                AIMessage(
+                    content=(
+                        "I'm having trouble routing this request to the "
+                        "right assistant. Please rephrase your question "
+                        "or start a new request."
+                    )
+                )
+            ],
+        }
+
+    return {"handoff_count": count}
+
+
+def route_after_handoff(state: LISAState) -> str:
+    if state.get("agent_handoff") is not None and state.get(
+        "handoff_count", 0
+    ) <= MAX_HANDOFFS:
         return "orchestrator"
+
     return "end"
 
+
 def build_graph(
-        orchestrator: Orchestrator,
-        technical_clarification_agent: TechnicalClarificationAgent,
-        general_enquiry_agent: GeneralEnquiry,
-        routing_policy: RoutingPolicy,
+    orchestrator: Orchestrator,
+    technical_clarification_agent: TechnicalClarificationAgent,
+    general_enquiry_agent: GeneralEnquiry,
+    routing_policy: RoutingPolicy,
 ):
     builder = StateGraph(LISAState, context_schema=LISAContext)
 
     builder.add_node("orchestrator", orchestrator.route)
-    builder.add_node("technical_clarification", technical_clarification_agent.run)
+    builder.add_node(
+        "technical_clarification",
+        technical_clarification_agent.run,
+    )
     builder.add_node("general_enquiry", general_enquiry_agent.run)
+    builder.add_node("record_handoff", record_handoff)
 
     builder.add_conditional_edges(
         START,
@@ -56,33 +99,28 @@ def build_graph(
             "orchestrator": "orchestrator",
             Route.TECHNICAL_CLARIFICATION.value: "technical_clarification",
             Route.GENERAL_ENQUIRY.value: "general_enquiry",
-        }
+        },
     )
-    # builder.add_edge(START, "orchestrator")
-    builder.add_conditional_edges("orchestrator", route_from_state,
-                                  {
-                                      Route.TECHNICAL_CLARIFICATION: "technical_clarification",
-                                      Route.GENERAL_ENQUIRY: "general_enquiry"
-                                  },
-                                  )
 
     builder.add_conditional_edges(
-        "technical_clarification",
-        route_from_agent,
+        "orchestrator",
+        route_from_state,
         {
-            "orchestrator": "orchestrator",
-            "end": END,
-        }
+            Route.TECHNICAL_CLARIFICATION: "technical_clarification",
+            Route.GENERAL_ENQUIRY: "general_enquiry",
+        },
     )
+
+    builder.add_edge("technical_clarification", "record_handoff")
+    builder.add_edge("general_enquiry", "record_handoff")
+
     builder.add_conditional_edges(
-        "general_enquiry",
-        route_from_agent,
+        "record_handoff",
+        route_after_handoff,
         {
             "orchestrator": "orchestrator",
             "end": END,
-        }
+        },
     )
-    # builder.add_edge("technical_clarification", END)
-    # builder.add_edge("general_enquiry", END)
 
     return builder.compile()

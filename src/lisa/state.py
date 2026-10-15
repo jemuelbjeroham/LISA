@@ -15,3 +15,4 @@ class LISAState(TypedDict):
     agent_handoff: dict | None
     knowledge_context: list[str]
     enable_thinking: bool
+    handoff_count: int
