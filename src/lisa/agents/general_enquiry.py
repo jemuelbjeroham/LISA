@@ -1,5 +1,6 @@
 
 import logging
+from collections.abc import AsyncIterator
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -13,6 +14,10 @@ from langgraph.runtime import Runtime
 
 from lisa.agents.base import BaseAgent
 from lisa.context import LISAContext
+from lisa.guardrails.output_moderation import (
+    BufferedOutputModerator,
+    OutputModerationBlocked,
+)
 from lisa.mcp.client import MCPClient
 from lisa.model_resilience import ModelResilience
 from lisa.state import LISAState
@@ -23,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 class GeneralEnquiry(BaseAgent):
-
     def __init__(
         self,
         model: BaseChatModel,
@@ -31,6 +35,7 @@ class GeneralEnquiry(BaseAgent):
         thinking_model: BaseChatModel,
         system_prompt: str,
         mcp_client: MCPClient,
+        output_moderator: BufferedOutputModerator,
     ):
         super().__init__(
             model=model,
@@ -40,6 +45,7 @@ class GeneralEnquiry(BaseAgent):
         self.fallback_model = self.bind_tools(fallback_model)
         self.thinking_model = self.bind_tools(thinking_model)
         self.mcp_client = mcp_client
+        self.output_moderator = output_moderator
 
         self.model_resilience = ModelResilience(
             primary=self.model,
@@ -51,7 +57,6 @@ class GeneralEnquiry(BaseAgent):
             "handoff": handoff,
             "save_memory": save_memory,
         }
-
 
     async def _get_mcp_tool_schemas(self) -> list[dict]:
         """Discover MCP tools and convert them to OpenAI-compatible schemas."""
@@ -78,7 +83,6 @@ class GeneralEnquiry(BaseAgent):
 
         return schemas
 
-
     async def _execute_mcp_tool(
         self,
         name: str,
@@ -99,11 +103,13 @@ class GeneralEnquiry(BaseAgent):
                 for item in result.content
                 if hasattr(item, "text")
             )
+
             logger.error(
                 "MCP tool failed: name=%s error=%s",
                 name,
                 error_text,
             )
+
             return f"Tool execution failed: {error_text}"
 
         return "\n".join(
@@ -112,13 +118,12 @@ class GeneralEnquiry(BaseAgent):
             if hasattr(item, "text")
         )
 
-
     async def _run_with_tools(
         self,
         messages: list,
         max_iterations: int = 5,
     ):
-        """Let the model call tools until it produces a final answer."""
+        """Run a bounded model/tool cycle and return the final response."""
         for iteration in range(max_iterations):
             response = await self.model.ainvoke(messages)
 
@@ -170,11 +175,8 @@ class GeneralEnquiry(BaseAgent):
 
         return await self.model.ainvoke(messages)
 
-
     async def initialize_tools(self) -> None:
-        """Discover MCP tools and bind them to the agent's models."""
-        # mcp_schemas = await self._get_mcp_tool_schemas()
-
+        """Discover MCP tools and bind the permitted tools to the models."""
         allowed_tool_names = {
             "web_search",
             "web_search_with_content",
@@ -214,12 +216,14 @@ class GeneralEnquiry(BaseAgent):
 
         logger.info(
             "GeneralEnquiry initialized with tools: %s",
-            ["handoff", *[
-                schema["function"]["name"]
-                for schema in mcp_schemas
-            ]],
+            [
+                "handoff",
+                *[
+                    schema["function"]["name"]
+                    for schema in mcp_schemas
+                ],
+            ],
         )
-
 
     async def run(
         self,
@@ -234,8 +238,7 @@ class GeneralEnquiry(BaseAgent):
             else str(last_message.content)
         )
 
-
-        logger.warning(
+        logger.info(
             "Building user context for user_id=%s",
             runtime.context.user_id,
         )
@@ -247,7 +250,7 @@ class GeneralEnquiry(BaseAgent):
             )
         )
 
-        # Retrieve only the dynamic memories relevant to this question.
+        # Retrieve only memories relevant to this question.
         memory_context = (
             await runtime.context.memory.context_service.build(
                 user_id=runtime.context.user_id,
@@ -275,30 +278,23 @@ class GeneralEnquiry(BaseAgent):
                 f"{memory_context}"
             )
 
-
         messages = [
             SystemMessage(content=system_content),
             *state["messages"],
         ]
 
-
-        logger.warning(
-            "\n========== GENERAL ENQUIRY: LLM INPUT ==========\n%s\n========== END LLM INPUT ==========",
-            "\n\n".join(
-                f"[{index}] {message.__class__.__name__}\n{message}"
-                for index, message in enumerate(messages)
-            ),
+        logger.debug(
+            "GeneralEnquiry prepared model input: message_count=%d",
+            len(messages),
         )
-
 
         writer = get_stream_writer()
 
-        # Continue the model/tool cycle until the model produces
-        # a response without requesting another tool.
-        while True:
-            response_chunks = []
-            full_chunk = None
+        # Bound the number of tool rounds to prevent an unbounded loop.
+        max_tool_iterations = 5
+        tool_iterations = 0
 
+        while True:
             if state["enable_thinking"]:
                 model = self.thinking_model
 
@@ -319,8 +315,11 @@ class GeneralEnquiry(BaseAgent):
 
                 stream = self.model_resilience.stream(messages)
 
-            # Stream the model response immediately while also
-            # assembling the complete message for tool inspection.
+            # Collect the complete model response before emitting any
+            # answer text. This lets us inspect complete tool calls first.
+            response_chunks: list[str] = []
+            full_chunk = None
+
             async for chunk in stream:
                 full_chunk = (
                     chunk
@@ -328,6 +327,7 @@ class GeneralEnquiry(BaseAgent):
                     else full_chunk + chunk
                 )
 
+                # Keep reasoning events separate from answer content.
                 reasoning = chunk.additional_kwargs.get(
                     "reasoning_content"
                 )
@@ -340,19 +340,14 @@ class GeneralEnquiry(BaseAgent):
                         )
                     )
 
-                if chunk.content:
-                    writer(
-                        StreamEvent(
-                            type="content",
-                            content=chunk.content,
-                        )
-                    )
-
+                # The moderator accepts text. Ignore non-text content
+                # rather than passing multimodal blocks into it.
+                if isinstance(chunk.content, str) and chunk.content:
                     response_chunks.append(chunk.content)
 
             if full_chunk is None:
                 logger.warning(
-                    "GeneralEnquiry received an empty model stream"
+                    "GeneralEnquiry received an empty model stream."
                 )
 
                 return {
@@ -361,12 +356,11 @@ class GeneralEnquiry(BaseAgent):
                     ]
                 }
 
-            assistant_message = message_chunk_to_message(
-                full_chunk
-            )
+            assistant_message = message_chunk_to_message(full_chunk)
 
             logger.info(
-                "GeneralEnquiry | Model response | content_length=%d | tool_calls=%s",
+                "GeneralEnquiry model response: content_length=%d "
+                "tool_calls=%s",
                 len(str(assistant_message.content or "")),
                 [
                     {
@@ -377,16 +371,11 @@ class GeneralEnquiry(BaseAgent):
                 ],
             )
 
-            if assistant_message.content:
-                logger.info(
-                    "GeneralEnquiry | Model content: %s",
-                    assistant_message.content,
-                )
-
+            # Handle handoffs before releasing any answer content.
             for tool_call in assistant_message.tool_calls:
                 if tool_call["name"] == "handoff":
                     logger.info(
-                        "Agent requested handoff: %s",
+                        "GeneralEnquiry requested handoff: %s",
                         tool_call["args"],
                     )
 
@@ -394,11 +383,74 @@ class GeneralEnquiry(BaseAgent):
                         "agent_handoff": tool_call["args"],
                     }
 
-            # Preserve the assistant message, including its tool calls.
-            messages.append(assistant_message)
-
+            # If there are no tool calls, this is the final answer.
+            # Moderate it before sending any content event.
             if not assistant_message.tool_calls:
-                final_response = "".join(response_chunks)
+                async def generated_text(
+                    chunks: AsyncIterator[str] = response_chunks,
+                ) -> AsyncIterator[str]:
+                    for text_chunk in chunks:
+                        if text_chunk:
+                            yield text_chunk
+
+
+                approved_chunks: list[str] = []
+                moderation_blocked = False
+
+                try:
+                    async for approved_text in (
+                        self.output_moderator.filter_stream(
+                            generated_text()
+                        )
+                    ):
+                        writer(
+                            StreamEvent(
+                                type="content",
+                                content=approved_text,
+                            )
+                        )
+                        approved_chunks.append(approved_text)
+
+                except OutputModerationBlocked:
+                    moderation_blocked = True
+                    logger.warning(
+                        "GeneralEnquiry response blocked by "
+                        "output moderation."
+                    )
+
+                except Exception:
+                    # Fail closed if the moderation service itself fails.
+                    logger.exception(
+                        "GeneralEnquiry output moderation failed."
+                    )
+                    moderation_blocked = True
+
+                if moderation_blocked:
+                    moderation_message = (
+                        "I'm sorry, but this response was blocked by "
+                        "our safety moderation checks. Please try "
+                        "rephrasing your request."
+                    )
+
+                    writer(
+                        StreamEvent(
+                            type="content",
+                            content=moderation_message,
+                        )
+                    )
+
+                    return {
+                        "messages": [
+                            AIMessage(content=moderation_message)
+                        ]
+                    }
+
+                final_response = "".join(approved_chunks)
+
+                logger.info(
+                    "GeneralEnquiry completed: response_length=%d",
+                    len(final_response),
+                )
 
                 return {
                     "messages": [
@@ -406,6 +458,33 @@ class GeneralEnquiry(BaseAgent):
                     ]
                 }
 
+
+            # Preserve the assistant message, including its tool calls.
+            messages.append(assistant_message)
+
+            tool_iterations += 1
+
+            if tool_iterations > max_tool_iterations:
+                logger.warning(
+                    "GeneralEnquiry reached the maximum tool iterations: "
+                    "max_iterations=%d",
+                    max_tool_iterations,
+                )
+
+                # Fail closed rather than continuing an unbounded cycle.
+                return {
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                "I couldn't complete the request within "
+                                "the allowed number of tool steps. "
+                                "Please try narrowing the request."
+                            )
+                        )
+                    ]
+                }
+
+            # Execute requested tools and append their results.
             for tool_call in assistant_message.tool_calls:
                 tool_name = tool_call["name"]
                 tool_args = dict(tool_call["args"])
@@ -417,7 +496,7 @@ class GeneralEnquiry(BaseAgent):
                         tool_args["runtime"] = runtime
 
                     logger.info(
-                        "GeneralEnquiry | Executing local tool: %s",
+                        "GeneralEnquiry executing local tool: %s",
                         tool_name,
                     )
 
@@ -428,7 +507,7 @@ class GeneralEnquiry(BaseAgent):
                     "web_search_with_content",
                 }:
                     logger.info(
-                        "GeneralEnquiry | Executing MCP tool: %s",
+                        "GeneralEnquiry executing MCP tool: %s",
                         tool_name,
                     )
 
@@ -439,14 +518,14 @@ class GeneralEnquiry(BaseAgent):
                         )
                     except Exception:
                         logger.exception(
-                            "GeneralEnquiry | MCP tool failed: %s",
+                            "GeneralEnquiry MCP tool failed: %s",
                             tool_name,
                         )
                         result = f"Tool execution failed: {tool_name}"
 
                 else:
                     logger.error(
-                        "GeneralEnquiry | Unknown tool requested: %s",
+                        "GeneralEnquiry received an unknown tool: %s",
                         tool_name,
                     )
                     result = f"Unknown tool: {tool_name}"
@@ -457,4 +536,3 @@ class GeneralEnquiry(BaseAgent):
                         tool_call_id=tool_call["id"],
                     )
                 )
-

@@ -364,7 +364,7 @@ class LISA:
             moderator=OpenAIOutputModerator(moderation_client),
             max_buffer_chars=200,
         )
-        
+
         self.database = Database(settings)
         self.exit_stack.push_async_callback(self.database.close)
 
@@ -464,6 +464,7 @@ class LISA:
             system_prompt=technical_prompt,
             hyde_prompt=hyde_prompt,
             retrieval_planner=self.retrieval_planner,
+            output_moderator=self.output_moderator,
         )
 
         self.general_enquiry_agent = GeneralEnquiry(
@@ -472,6 +473,7 @@ class LISA:
             thinking_model=self.thinking_model,
             system_prompt=general_enquiry_prompt,
             mcp_client=self.mcp_client,
+            output_moderator=self.output_moderator,
         )
 
         await self.general_enquiry_agent.initialize_tools()

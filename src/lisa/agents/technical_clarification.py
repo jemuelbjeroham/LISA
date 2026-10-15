@@ -1,4 +1,6 @@
+
 import logging
+from collections.abc import AsyncIterator
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -11,6 +13,10 @@ from langchain_core.messages.utils import message_chunk_to_message
 from langgraph.config import get_stream_writer
 
 from lisa.agents.base import BaseAgent
+from lisa.guardrails.output_moderation import (
+    BufferedOutputModerator,
+    OutputModerationBlocked,
+)
 from lisa.knowledge.protocol import KnowledgeRetriever
 from lisa.retrieval.planning import RetrievalPlanner
 from lisa.state import LISAState
@@ -27,6 +33,7 @@ class TechnicalClarificationAgent(BaseAgent):
         hyde_prompt: str,
         retriever: KnowledgeRetriever,
         retrieval_planner: RetrievalPlanner,
+        output_moderator: BufferedOutputModerator,
     ):
         super().__init__(
             model=model,
@@ -38,6 +45,7 @@ class TechnicalClarificationAgent(BaseAgent):
         self.hyde_prompt = hyde_prompt
         self.retriever = retriever
         self.retrieval_planner = retrieval_planner
+        self.output_moderator = output_moderator
 
     async def run(self, state: LISAState):
         user_message = state["messages"][-1]
@@ -94,7 +102,7 @@ class TechnicalClarificationAgent(BaseAgent):
             retrieval_decision.reasoning,
         )
 
-        # Step 3: Only generate a HyDE document and retrieve knowledge
+        # Step 3: Generate a HyDE document and retrieve knowledge only
         # when the planner explicitly decides that RAG is needed.
         if use_rag:
             if not retrieval_query:
@@ -117,9 +125,7 @@ class TechnicalClarificationAgent(BaseAgent):
                 retrieval_input,
             )
 
-            knowledge = await self.retriever.retrieve(
-                retrieval_input
-            )
+            knowledge = await self.retriever.retrieve(retrieval_input)
 
             logger.info(
                 "Technical knowledge retrieval completed: chunks=%d",
@@ -132,8 +138,8 @@ class TechnicalClarificationAgent(BaseAgent):
             )
 
         # Step 4: Build the response prompt.
-        # Distinguish between a search that returned no results and a
-        # turn for which retrieval was deliberately skipped.
+        # Distinguish between an empty search result and deliberately
+        # skipping retrieval.
         knowledge_context = "\n\n".join(knowledge)
 
         if use_rag and knowledge_context.strip():
@@ -204,9 +210,11 @@ class TechnicalClarificationAgent(BaseAgent):
             *state["messages"],
         ]
 
-        # Step 5: Generate the answer.
-        # Preserve the existing buffering behaviour so a handoff can
-        # be inspected before answer content is emitted.
+        # Step 5: Generate the response.
+        #
+        # First collect the complete model stream so we can inspect
+        # complete tool calls and preserve the existing handoff behavior.
+        # No response content is emitted to the client at this stage.
         writer = get_stream_writer()
         content_chunks: list[str] = []
         full_chunk: AIMessageChunk | None = None
@@ -219,6 +227,7 @@ class TechnicalClarificationAgent(BaseAgent):
             else:
                 full_chunk = full_chunk + chunk
 
+            # Reasoning is a separate event, not user-facing answer text.
             reasoning = chunk.additional_kwargs.get(
                 "reasoning_content"
             )
@@ -231,6 +240,7 @@ class TechnicalClarificationAgent(BaseAgent):
                     )
                 )
 
+            # Keep only text content for the moderation pipeline.
             if chunk.content:
                 if isinstance(chunk.content, str):
                     content_chunks.append(chunk.content)
@@ -271,31 +281,81 @@ class TechnicalClarificationAgent(BaseAgent):
                     "knowledge_context": knowledge,
                 }
 
-        # Emit the response only after confirming that no handoff
-        # was requested.
-        final_response = "".join(content_chunks)
+        # Step 6: Moderate generated text before emitting content events.
+        #
+        # The moderator buffers text, checks each buffered segment, and
+        # yields only approved text. A moderation rejection or moderation
+        # service error aborts this response rather than approving it.
+        async def generated_text() -> AsyncIterator[str]:
+            for text_chunk in content_chunks:
+                if text_chunk:
+                    yield text_chunk
 
-        if final_response:
-            writer(
-                StreamEvent(
-                    type="content",
-                    content=final_response,
+
+                approved_chunks: list[str] = []
+                moderation_blocked = False
+
+                try:
+                    async for approved_text in (
+                        self.output_moderator.filter_stream(
+                            generated_text()
+                        )
+                    ):
+                        writer(
+                            StreamEvent(
+                                type="content",
+                                content=approved_text,
+                            )
+                        )
+                        approved_chunks.append(approved_text)
+
+                except OutputModerationBlocked:
+                    moderation_blocked = True
+                    logger.warning(
+                        "GeneralEnquiry response blocked by "
+                        "output moderation."
+                    )
+
+                except Exception:
+                    # Fail closed if the moderation service itself fails.
+                    logger.exception(
+                        "GeneralEnquiry output moderation failed."
+                    )
+                    moderation_blocked = True
+
+                if moderation_blocked:
+                    moderation_message = (
+                        "I'm sorry, but this response was blocked by "
+                        "our safety moderation checks. Please try "
+                        "rephrasing your request."
+                    )
+
+                    writer(
+                        StreamEvent(
+                            type="content",
+                            content=moderation_message,
+                        )
+                    )
+
+                    return {
+                        "messages": [
+                            AIMessage(content=moderation_message)
+                        ]
+                    }
+
+                final_response = "".join(approved_chunks)
+
+                logger.info(
+                    "GeneralEnquiry completed: response_length=%d",
+                    len(final_response),
                 )
-            )
 
-        logger.info(
-            "Technical clarification completed: response_length=%d "
-            "rag_used=%s",
-            len(final_response),
-            use_rag,
-        )
+                return {
+                    "messages": [
+                        AIMessage(content=final_response)
+                    ]
+                }
 
-        return {
-            "messages": [
-                AIMessage(content=final_response)
-            ],
-            "knowledge_context": knowledge,
-        }
 
     async def _generate_hypothetical_document(
         self,
