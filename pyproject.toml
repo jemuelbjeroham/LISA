@@ -10,6 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.20.0",
     "asyncpg>=0.31.0",
+    "jsonschema>=4.26.0",
     "langchain-huggingface>=1.2.2",
     "langchain-nvidia-ai-endpoints>=1.4.3",
     "langchain-openai>=1.6.1",

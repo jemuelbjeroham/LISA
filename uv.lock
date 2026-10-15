@@ -882,6 +882,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
+    { name = "jsonschema" },
     { name = "langchain-huggingface" },
     { name = "langchain-nvidia-ai-endpoints" },
     { name = "langchain-openai" },
@@ -906,6 +907,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.20.0" },
     { name = "asyncpg", specifier = ">=0.31.0" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain-huggingface", specifier = ">=1.2.2" },
     { name = "langchain-nvidia-ai-endpoints", specifier = ">=1.4.3" },
     { name = "langchain-openai", specifier = ">=1.6.1" },
