@@ -40,3 +40,17 @@ class Settings(BaseSettings):
 
     #Database
     database_url: str = Field(validation_alias="LISA_DATABASE_URL")
+
+    # Langfuse observability
+    langfuse_public_key: str | None = Field(
+        default=None,
+        validation_alias="LANGFUSE_PUBLIC_KEY",
+    )
+    langfuse_secret_key: str | None = Field(
+        default=None,
+        validation_alias="LANGFUSE_SECRET_KEY",
+    )
+    langfuse_base_url: str = Field(
+        default="http://localhost:3001",
+        validation_alias="LANGFUSE_BASE_URL",
+    )
