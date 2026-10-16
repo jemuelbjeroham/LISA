@@ -31,7 +31,11 @@ from lisa.model import (
     create_technical_model,
     create_thinking_chat_model,
 )
-from lisa.observability import LISAObservability, create_langfuse_client
+from lisa.observability import (
+    LISAObservability,
+    create_langfuse_client,
+    create_langfuse_handler,
+)
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 from lisa.retrieval.planning import RetrievalPlanner
@@ -70,6 +74,7 @@ class LISA:
         self.routing_policy = None
         self._memory_tasks: set[asyncio.Task[None]] = set()
         self.observability = LISAObservability(client=None)
+        self.langfuse_handler = None
         logger.debug(
             "LISA instance created: custom_model=%s, custom_thinking_model=%s, "
             "custom_router_model=%s, custom_fallback_model=%s, "
@@ -125,6 +130,7 @@ class LISA:
                 workflow = MemoryWorkflow(
                     agent=self.memory_agent,
                     service=dependencies.service,
+                    user_context_service=dependencies.user_context_service,
                 )
 
                 saved = await workflow.process(
@@ -167,6 +173,7 @@ class LISA:
                 conversation_id,
                 operation,
             )
+
 
 
     async def chat(
@@ -214,6 +221,15 @@ class LISA:
         if self.database is None:
             raise RuntimeError("Database has not been initialized")
 
+        config = {
+            "recursion_limit": 12,
+            "callbacks": (
+                [self.langfuse_handler]
+                if self.langfuse_handler is not None
+                else []
+            ),
+        }
+
         try:
             async with self.database.session() as session:
                 context = LISAContext(
@@ -230,12 +246,13 @@ class LISA:
                 ) as span:
                     result = await self.graph.ainvoke(
                         state,
-                        config={"recursion_limit": 12},
+                        config=config,
                         context=context,
                     )
 
                     if span is not None:
                         response = result["messages"][-1]
+
                         span.update(
                             output={
                                 "route": str(
@@ -284,7 +301,7 @@ class LISA:
 
         return response.content
 
-    
+
 
     async def stream_chat(
         self,
@@ -327,6 +344,15 @@ class LISA:
         if self.database is None:
             raise RuntimeError("Database is not initialized")
 
+        config = {
+            "recursion_limit": 12,
+            "callbacks": (
+                [self.langfuse_handler]
+                if self.langfuse_handler is not None
+                else []
+            ),
+        }
+
         final_state = None
         event_count = 0
 
@@ -347,7 +373,7 @@ class LISA:
 
                     async for mode, chunk in self.graph.astream(
                         state,
-                        config={"recursion_limit": 12},
+                        config=config,
                         context=context,
                         stream_mode=["custom", "values"],
                     ):
@@ -377,6 +403,7 @@ class LISA:
                         if final_state is not None
                         else []
                     )
+
                     final_response = (
                         final_messages[-1]
                         if final_messages
@@ -449,6 +476,7 @@ class LISA:
                 event_count,
             )
 
+
         # # async for chunk in self.technical_clarification_agent.stream(state):
         # #     content = chunk.content
         # #     if content:
@@ -467,6 +495,7 @@ class LISA:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
         settings = Settings()
         self.observability = LISAObservability(client=create_langfuse_client(settings))
+        self.langfuse_handler = create_langfuse_handler()
         moderation_client = AsyncOpenAI(
             api_key=settings.openai_token,
         )

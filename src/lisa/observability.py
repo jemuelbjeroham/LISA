@@ -4,8 +4,14 @@ from contextlib import contextmanager
 from typing import Any
 
 from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
 
 logger = logging.getLogger(__name__)
+
+
+def create_langfuse_handler() -> CallbackHandler:
+    """Create a handler for LangChain/LangGraph tracing."""
+    return CallbackHandler()
 
 def create_langfuse_client(settings) -> Langfuse | None:
     if not settings.langfuse_public_key or not settings.langfuse_secret_key:
