@@ -101,35 +101,71 @@ class LISA:
         self._memory_tasks.add(task)
         task.add_done_callback(self._memory_tasks.discard)
 
+ 
     async def _process_memory(
-            self,
-            user_id: UUID,
-            messages: list[BaseMessage],
-            conversation_id: UUID,
+        self,
+        user_id: UUID,
+        messages: list[BaseMessage],
+        conversation_id: UUID,
     ) -> None:
+        operation = "background_memory_processing"
+
         try:
             if self.database is None or self.memory_agent is None:
+                logger.warning(
+                    "Skipping background memory processing: "
+                    "conversation_id=%s, reason=dependencies_unavailable",
+                    conversation_id,
+                )
                 return
+
             async with self.database.session() as session:
                 dependencies = memory_dependencies(session)
+
                 workflow = MemoryWorkflow(
                     agent=self.memory_agent,
                     service=dependencies.service,
-                    user_context_service=dependencies.user_context_service
                 )
+
                 saved = await workflow.process(
                     user_id=user_id,
                     messages=messages,
                 )
+
             logger.info(
-                "Memory processing completed: conversation_id=%s, saved=%d",
+                "Background memory processing completed: "
+                "conversation_id=%s, operation=%s, saved=%d",
                 conversation_id,
+                operation,
                 len(saved),
             )
+
+        except TimeoutError as exc:
+            logger.warning(
+                "Background memory processing timed out: "
+                "conversation_id=%s, operation=%s, "
+                "exception_type=%s, error=%s",
+                conversation_id,
+                operation,
+                type(exc).__name__,
+                str(exc) or "No additional error details",
+            )
+
+        except asyncio.CancelledError:
+            logger.info(
+                "Background memory processing cancelled: "
+                "conversation_id=%s, operation=%s",
+                conversation_id,
+                operation,
+            )
+            raise
+
         except Exception:
             logger.exception(
-                "Background memory processing failed: conversation_id=%s",
+                "Unexpected background memory processing failure: "
+                "conversation_id=%s, operation=%s",
                 conversation_id,
+                operation,
             )
 
 
@@ -249,19 +285,29 @@ class LISA:
         return response.content
 
     
-    async def stream_chat(self, conversation_id: UUID, message: str, user_id: UUID, enable_thinking: bool = False):
+
+    async def stream_chat(
+        self,
+        conversation_id: UUID,
+        message: str,
+        user_id: UUID,
+        enable_thinking: bool = False,
+    ):
         logger.info(
             "Starting streaming chat request: conversation_id=%s, thinking_enabled=%s",
             conversation_id,
             enable_thinking,
         )
+
         state = await self.conversation_store.get(conversation_id)
+
         logger.info(
             "Loaded conversation state: conversation_id=%s, active_route=%s, messages=%d",
             conversation_id,
             state.get("active_route") if state else None,
             len(state["messages"]) if state else 0,
         )
+
         if state is None:
             state = {
                 "messages": [],
@@ -275,49 +321,104 @@ class LISA:
         else:
             state["enable_thinking"] = enable_thinking
             state["handoff_count"] = 0
-        state["messages"].append(
-            HumanMessage(content=message)
-        )
+
+        state["messages"].append(HumanMessage(content=message))
+
         if self.database is None:
             raise RuntimeError("Database is not initialized")
+
         final_state = None
         event_count = 0
+
         try:
-            async with self.database.session() as session:
-                context = LISAContext(
-                    user_id=user_id,
-                    memory=memory_dependencies(session),
-                )
-                async for mode, chunk in self.graph.astream(state, config={"recursion_limit": 12}, context=context, stream_mode=["custom", "values"]):
-                    if mode == "custom":
-                        if not isinstance(chunk, StreamEvent):
-                            logger.warning(
-                                "Received unexpected custom stream event: type=%s",
-                                type(chunk).__name__,
+            with self.observability.span(
+                "lisa.graph.stream",
+                input={
+                    "enable_thinking": enable_thinking,
+                    "message_count": len(state["messages"]),
+                    "stream_mode": ["custom", "values"],
+                },
+            ) as span:
+                async with self.database.session() as session:
+                    context = LISAContext(
+                        user_id=user_id,
+                        memory=memory_dependencies(session),
+                    )
+
+                    async for mode, chunk in self.graph.astream(
+                        state,
+                        config={"recursion_limit": 12},
+                        context=context,
+                        stream_mode=["custom", "values"],
+                    ):
+                        if mode == "custom":
+                            if not isinstance(chunk, StreamEvent):
+                                logger.warning(
+                                    "Received unexpected custom stream event: type=%s",
+                                    type(chunk).__name__,
+                                )
+                                continue
+
+                            logger.info(
+                                "Received stream event: conversation_id=%s, type=%s",
+                                conversation_id,
+                                chunk.type,
                             )
-                            continue
-                        logger.info(
-                            "Received stream event: conversation_id=%s, type=%s",
-                            conversation_id,
-                            chunk.type,
-                        )
-                        event_count += 1
-                        yield chunk
-                    elif mode == "values":
-                        final_state = chunk
+
+                            event_count += 1
+                            yield chunk
+
+                        elif mode == "values":
+                            final_state = chunk
+
+                if span is not None:
+                    final_messages = (
+                        final_state.get("messages", [])
+                        if final_state is not None
+                        else []
+                    )
+                    final_response = (
+                        final_messages[-1]
+                        if final_messages
+                        else None
+                    )
+
+                    span.update(
+                        output={
+                            "event_count": event_count,
+                            "final_state_received": final_state is not None,
+                            "active_route": (
+                                str(
+                                    final_state.get("active_route")
+                                    or final_state.get("route")
+                                )
+                                if final_state is not None
+                                else None
+                            ),
+                            "response_type": (
+                                type(final_response).__name__
+                                if final_response is not None
+                                else None
+                            ),
+                        }
+                    )
+
         except Exception:
             logger.exception(
                 "Streaming graph failed: conversation_id=%s",
                 conversation_id,
             )
             raise
+
         if final_state is not None:
             try:
                 await self.conversation_store.save(
                     conversation_id,
                     final_state,
                 )
+
                 messages = final_state["messages"]
+
                 if messages and messages[-1].type == "ai":
                     self._schedule_memory_processing(
                         user_id=user_id,
@@ -327,23 +428,27 @@ class LISA:
                         ],
                         conversation_id=conversation_id,
                     )
+
             except Exception:
                 logger.exception(
                     "Failed to persist streaming result: conversation_id=%s",
                     conversation_id,
                 )
                 raise
+
             logger.info(
                 "Completed streaming chat request: conversation_id=%s, events=%d",
                 conversation_id,
                 event_count,
             )
+
         else:
             logger.warning(
                 "Streaming chat completed without a final state: conversation_id=%s, events=%d",
                 conversation_id,
                 event_count,
             )
+
         # # async for chunk in self.technical_clarification_agent.stream(state):
         # #     content = chunk.content
         # #     if content:
