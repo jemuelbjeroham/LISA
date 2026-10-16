@@ -1,4 +1,7 @@
 import logging
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import Any
 
 from langfuse import Langfuse
 
@@ -17,6 +20,34 @@ def create_langfuse_client(settings) -> Langfuse | None:
         )
 
     except Exception:
-        logger.exception("Failder to initialize Langfuse.")
+        logger.exception("Failed to initialize Langfuse.")
         return None
-    
+
+class LISAObservability:
+    def __init__(self, client: Langfuse | None) -> None:
+        self.client = client
+
+    @contextmanager
+    def span(
+        self,
+        name: str,
+        *,
+        input: dict[str, Any] | None = None,
+    ) -> Generator[Any, None, None]:  # noqa: UP043
+        if self.client is None:
+            yield None
+            return
+
+        with self.client.start_as_current_observation(
+            as_type="span",
+            name=name,
+            input=input,
+        ) as observation:
+            yield observation
+
+    def flush(self) -> None:
+        if self.client is not None:
+            try:
+                self.client.flush()
+            except Exception:
+                logger.exception("Failed to flush Langfuse observations")
