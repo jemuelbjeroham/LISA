@@ -12,8 +12,12 @@ class Settings(BaseSettings):
     extra="ignore",
     )
     #Primary Model
-    model_provider: str = "nvidia"
-    model_name: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
+    # model_provider: str = "nvidia"
+    # model_name: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
+    #Primary Model
+    model_provider: str = "openai"
+    model_name: str = "gpt-5.6-sol"
 
     #Fallback Model
     fallback_model_provider: str = "openai"

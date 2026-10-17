@@ -15,7 +15,17 @@ def create_chat_model(settings: Settings) -> BaseChatModel:
                 },
             },
         )
-    raise ValueError(f"Unsupported Model Provider: {settings.model_provider}")
+    
+    if settings.model_provider == "openai":
+        return ChatOpenAI(
+            model=settings.model_name,
+            api_key=settings.openai_token,
+        )
+    
+    raise ValueError(
+        f"Unsupported Fallback Model Provider: "
+        f"{settings.fallback_model_provider}"
+    )
 
 
 def create_fallback_model(settings: Settings) -> BaseChatModel:
@@ -49,6 +59,18 @@ def create_thinking_chat_model(settings: Settings) -> BaseChatModel:
                 "reasoning_budget": 16384,
             },
         )
+
+    if settings.model_provider == "openai":
+        return ChatOpenAI(
+            model=settings.model_name,
+            api_key=settings.openai_token,
+            reasoning={
+                "effort": "high",
+                "summary": "auto",
+            },
+            use_responses_api=True,
+        )
+    
     raise ValueError(f"Unsupported Model Provider: {settings.model_provider}")
 
 def create_router_model(settings: Settings) -> BaseChatModel:

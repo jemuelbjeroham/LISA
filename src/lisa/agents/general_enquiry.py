@@ -25,6 +25,24 @@ from lisa.tools import handoff, save_memory
 
 logger = logging.getLogger(__name__)
 
+def extract_text(content: str | list) -> str:
+    """Extract visible text from string or block-based model content."""
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+    return ""
+
 LOCAL_TOOL_ALLOWLIST = frozenset(
     {
         "handoff",
@@ -134,7 +152,7 @@ class GeneralEnquiry(BaseAgent):
         }
 
         # Keep authorization independent from model-provided tool requests.
-        tool_schemas = [handoff, *mcp_schemas]
+        tool_schemas = [handoff, save_memory, *mcp_schemas]
 
         self.model = self.model.bind_tools(
             tool_schemas,
@@ -161,7 +179,7 @@ class GeneralEnquiry(BaseAgent):
 
         logger.info(
             "GeneralEnquiry initialized with tools: %s",
-            ["handoff", *self.tool_schemas.keys()],
+            tool_schemas,
         )
 
     async def _moderate_input(self, user_query: str) -> tuple[bool, str | None]:
@@ -461,6 +479,15 @@ class GeneralEnquiry(BaseAgent):
 
             try:
                 async for chunk in stream:
+
+                    logger.info(
+                        "OPENAI STREAM DEBUG: content=%r content_type=%s "
+                        "additional_kwargs=%r",
+                        chunk.content,
+                        type(chunk.content).__name__,
+                        chunk.additional_kwargs,
+                    )
+
                     full_chunk = (
                         chunk if full_chunk is None else full_chunk + chunk
                     )
@@ -477,12 +504,16 @@ class GeneralEnquiry(BaseAgent):
                             )
                         )
 
-                    if isinstance(chunk.content, str) and chunk.content:
-                        response_chunks.append(chunk.content)
+                    # OpenAI Responses API chunks may expose content as a list
+                    # of text blocks, while other providers may return a string.
+                    # Normalize each chunk and emit its text immediately.
+                    text = extract_text(chunk.content)
+                    if text:
+                        response_chunks.append(text)
 
                         # This is direct token/chunk streaming. There is no
                         # output moderation buffer in this path.
-                        await self._emit_content(writer, chunk.content)
+                        await self._emit_content(writer, text)
 
             except Exception:
                 logger.exception("GeneralEnquiry model stream failed.")
@@ -596,6 +627,10 @@ class GeneralEnquiry(BaseAgent):
 
             # No tool calls means the assistant has completed its response.
             if not assistant_message.tool_calls:
+                logger.info(
+                    "OPENAI STREAM DEBUG: collected_chunks=%d",
+                    len(response_chunks),
+                )
                 final_response = "".join(response_chunks)
 
                 logger.info(

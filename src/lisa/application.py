@@ -146,15 +146,13 @@ class LISA:
                 len(saved),
             )
 
-        except TimeoutError as exc:
-            logger.warning(
+
+        except TimeoutError:
+            logger.exception(
                 "Background memory processing timed out: "
-                "conversation_id=%s, operation=%s, "
-                "exception_type=%s, error=%s",
+                "conversation_id=%s, operation=%s",
                 conversation_id,
                 operation,
-                type(exc).__name__,
-                str(exc) or "No additional error details",
             )
 
         except asyncio.CancelledError:

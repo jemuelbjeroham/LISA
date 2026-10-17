@@ -17,7 +17,7 @@ class ModelResilience:
         self,
         primary: BaseChatModel,
         fallback: BaseChatModel,
-        inactivity_timeout_seconds: float = 5.0,
+        inactivity_timeout_seconds: float = 10.0,
     ) -> None:
         if inactivity_timeout_seconds <= 0:
             raise ValueError("inactivity_timeout_seconds must be positive")
