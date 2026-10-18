@@ -1,3 +1,4 @@
+
 import json
 import logging
 from uuid import UUID
@@ -10,6 +11,7 @@ from lisa.state import LISAState
 
 logger = logging.getLogger(__name__)
 
+
 class RedisConversationStore(ConversationStore):
     def __init__(
         self,
@@ -19,59 +21,49 @@ class RedisConversationStore(ConversationStore):
         self.redis = redis
         self.key_prefix = key_prefix
 
-    def _key(self, conversation_id: UUID) -> str:
-        return f"{self.key_prefix}{conversation_id}"
+    def _key(self, user_id: UUID, conversation_id: UUID) -> str:
+        return f"{self.key_prefix}{user_id}:{conversation_id}"
+
+    def _index_key(self, user_id: UUID) -> str:
+        return f"{self.key_prefix}index:{user_id}"
 
     async def get(
         self,
+        user_id: UUID,
         conversation_id: UUID,
     ) -> LISAState | None:
-        key = self._key(conversation_id)
-
-        logger.info(
-            "Reading conversation state from Redis: key=%s",
-            key,
-        )
+        key = self._key(user_id, conversation_id)
         data = await self.redis.get(key)
 
         if data is None:
-            logger.info(
-                "Conversation state not found in Redis: key=%s",
-                key,
-            )
             return None
 
-        logger.info(
-            "Conversation state retrived from Redis: key=%s",
-            key,
-        )
         serialized_state = json.loads(data)
-
-        return ConversationStateSerializer.deserialize(
-            serialized_state
-        )
+        return ConversationStateSerializer.deserialize(serialized_state)
 
     async def save(
         self,
+        user_id: UUID,
         conversation_id: UUID,
         state: LISAState,
     ) -> None:
-        key = self._key(conversation_id)
+        key = self._key(user_id, conversation_id)
+        serialized_state = ConversationStateSerializer.serialize(state)
 
-        logger.info(
-            "Saving conversation state to Redis: key=%s",
-            key,
-        )
-        serialized_state = ConversationStateSerializer.serialize(
-            state
+        async with self.redis.pipeline(transaction=True) as pipeline:
+            pipeline.set(key, json.dumps(serialized_state))
+            pipeline.sadd(
+                self._index_key(user_id),
+                str(conversation_id),
+            )
+            await pipeline.execute()
+
+    async def list_conversations(self, user_id: UUID) -> list[UUID]:
+        conversation_ids = await self.redis.smembers(
+            self._index_key(user_id)
         )
 
-        await self.redis.set(
-            key,
-            json.dumps(serialized_state),
-        )
-
-        logger.info(
-            "Conversation state saved to Redis: key=%s",
-            key,
+        return sorted(
+            (UUID(conversation_id) for conversation_id in conversation_ids),
+            reverse=True,
         )
