@@ -26,3 +26,25 @@ class ConversationStore(Protocol):
         user_id: UUID,
     ) -> list[UUID]:
         ...
+
+    async def get_title(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+    ) -> str | None:
+        ...
+
+    async def set_title(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+        title: str,
+    ) -> None:
+        ...
+
+    async def delete(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+    ) -> None:
+        ...

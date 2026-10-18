@@ -27,13 +27,24 @@ class RedisConversationStore(ConversationStore):
     def _index_key(self, user_id: UUID) -> str:
         return f"{self.key_prefix}index:{user_id}"
 
+    def _title_key(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+    ) -> str:
+        return (
+            f"{self.key_prefix}metadata:"
+            f"{user_id}:{conversation_id}"
+        )
+
     async def get(
         self,
         user_id: UUID,
         conversation_id: UUID,
     ) -> LISAState | None:
-        key = self._key(user_id, conversation_id)
-        data = await self.redis.get(key)
+        data = await self.redis.get(
+            self._key(user_id, conversation_id)
+        )
 
         if data is None:
             return None
@@ -67,3 +78,49 @@ class RedisConversationStore(ConversationStore):
             (UUID(conversation_id) for conversation_id in conversation_ids),
             reverse=True,
         )
+
+    async def get_title(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+    ) -> str | None:
+        title = await self.redis.get(
+            self._title_key(user_id, conversation_id)
+        )
+
+        if title is None:
+            return None
+
+        if isinstance(title, bytes):
+            return title.decode("utf-8")
+
+        return title
+
+    async def set_title(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+        title: str,
+    ) -> None:
+        await self.redis.set(
+            self._title_key(user_id, conversation_id),
+            title,
+        )
+
+    async def delete(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+    ) -> None:
+        async with self.redis.pipeline(transaction=True) as pipeline:
+            pipeline.delete(
+                self._key(user_id, conversation_id)
+            )
+            pipeline.delete(
+                self._title_key(user_id, conversation_id)
+            )
+            pipeline.srem(
+                self._index_key(user_id),
+                str(conversation_id),
+            )
+            await pipeline.execute()
