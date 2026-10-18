@@ -172,7 +172,9 @@ class LISA:
                 operation,
             )
 
-
+    async def list_conversations(self, user_id: UUID) -> list[UUID]:
+            """Return the IDs of conversations belonging to a user."""
+            return await self.conversation_store.list_conversations(user_id)
 
     async def chat(
         self,
