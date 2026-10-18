@@ -187,7 +187,10 @@ class LISA:
             enable_thinking,
         )
 
-        state = await self.conversation_store.get(conversation_id)
+        state = await self.conversation_store.get(
+            user_id,
+            conversation_id,
+        )
 
         logger.debug(
             "Loaded conversation state: conversation_id=%s, exists=%s, messages=%d",
@@ -270,6 +273,7 @@ class LISA:
 
         try:
             await self.conversation_store.save(
+                user_id,
                 conversation_id,
                 result,
             )
@@ -314,7 +318,10 @@ class LISA:
             enable_thinking,
         )
 
-        state = await self.conversation_store.get(conversation_id)
+        state = await self.conversation_store.get(
+            user_id,
+            conversation_id,
+        )
 
         logger.info(
             "Loaded conversation state: conversation_id=%s, active_route=%s, messages=%d",
@@ -438,6 +445,7 @@ class LISA:
         if final_state is not None:
             try:
                 await self.conversation_store.save(
+                    user_id,
                     conversation_id,
                     final_state,
                 )
