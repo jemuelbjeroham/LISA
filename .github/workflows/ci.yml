@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  python-ci:
+    uses: jemuelbjeroham/lisa-cicd/.github/workflows/python-ci.yml@7af3e2c96d5a0af5af2bf33d3850d73d05a6b129
+    with:
+      python-version: "3.14"
