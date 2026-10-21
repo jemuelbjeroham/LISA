@@ -50,9 +50,11 @@ Do not explain that you are going to call the tool.
         ),
         (
             "human",
-            "I am working on an incident where a particular source "
-            "is unable to reach a destination because of a firewall. "
-            "I need help troubleshooting it.",
+            (
+                "I am working on an incident where a particular source "
+                "is unable to reach a destination because of a firewall. "
+                "I need help troubleshooting it."
+            ),
         ),
     ]
 

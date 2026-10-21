@@ -1,13 +1,14 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from lisa.infrastructure.postgres.memory_retriever import (
+    PostgresMemoryRetriever,
+)
+
 from lisa.config import Settings
 from lisa.infrastructure.postgres.database import Database
 from lisa.infrastructure.postgres.memory_repository import (
     PostgresMemoryRepository,
-)
-from lisa.infrastructure.postgres.memory_retriever import (
-    PostgresMemoryRetriever,
 )
 from lisa.memory.models import (
     Memory,

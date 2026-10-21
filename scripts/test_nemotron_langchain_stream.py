@@ -30,36 +30,40 @@ async def main():
         )
     ]
 
-    with OUTPUT_FILE.open("w", encoding="utf-8") as file:
+    output_lines = [
+        "=" * 80 + "\n",
+        "STREAMING CHUNKS\n",
+        "=" * 80 + "\n",
+    ]
 
-        file.write("=" * 80 + "\n")
-        file.write("STREAMING CHUNKS\n")
-        file.write("=" * 80 + "\n")
+    index = 0
 
-        index = 0
+    async for chunk in model.astream(messages):
+        output_lines.extend(
+            [
+                "\n" + "-" * 80 + "\n",
+                f"CHUNK #{index}\n",
+                "-" * 80 + "\n",
+                "\nTYPE:\n",
+                f"{type(chunk)}\n",
+                "\nCONTENT:\n",
+                repr(chunk.content) + "\n",
+                "\nADDITIONAL KWARGS:\n",
+                repr(chunk.additional_kwargs) + "\n",
+                "\nRESPONSE METADATA:\n",
+                repr(chunk.response_metadata) + "\n",
+                "\nFULL CHUNK:\n",
+                repr(chunk) + "\n",
+            ]
+        )
 
-        async for chunk in model.astream(messages):
+        index += 1
 
-            file.write("\n" + "-" * 80 + "\n")
-            file.write(f"CHUNK #{index}\n")
-            file.write("-" * 80 + "\n")
-
-            file.write("\nTYPE:\n")
-            file.write(f"{type(chunk)}\n")
-
-            file.write("\nCONTENT:\n")
-            file.write(repr(chunk.content) + "\n")
-
-            file.write("\nADDITIONAL KWARGS:\n")
-            file.write(repr(chunk.additional_kwargs) + "\n")
-
-            file.write("\nRESPONSE METADATA:\n")
-            file.write(repr(chunk.response_metadata) + "\n")
-
-            file.write("\nFULL CHUNK:\n")
-            file.write(repr(chunk) + "\n")
-
-            index += 1
+    await asyncio.to_thread(
+        OUTPUT_FILE.write_text,
+        "".join(output_lines),
+        encoding="utf-8",
+    )
 
     print(f"Streaming output written to: {OUTPUT_FILE.resolve()}")
 
