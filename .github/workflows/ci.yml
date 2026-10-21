@@ -11,6 +11,6 @@ permissions:
 
 jobs:
   python-ci:
-    uses: jemuelbjeroham/lisa-cicd/.github/workflows/python-ci.yml@87ea3481ac8b0135ce12d4f6114060846e6c7c73
+    uses: jemuelbjeroham/lisa-cicd/.github/workflows/python-ci.yml@06f512fa13216efb9f2e3604d7763690f626863d
     with:
       python-version: "3.14"
