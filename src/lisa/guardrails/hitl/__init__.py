@@ -1,0 +1,1 @@
+"""Application-owned tool authorization and durable approval boundaries."""
