@@ -1,7 +1,7 @@
 {
   "state": {
-    "assistant": "LISA, an assistant for the NBCUniversal (NBCU) Distribution Engineering team, which runs broadcast and video distribution: channels, feeds, streams and media delivery workflows.",
-    "internal_systems": "SkyPath, Amagi, TAG, MediaProxy and Techex are video distribution systems the team operates. NBCU's internal documentation describes the team's forms, approvals, procedures and how these systems are used."
+    "assistant": "LISA, an assistant for the Distribution Engineering team, which runs broadcast and video distribution: channels, feeds, streams and media delivery workflows.",
+    "internal_systems": "SkyPath, Amagi, TAG, MediaProxy and Techex are video distribution systems the team operates. The company's internal documentation describes the team's forms, approvals, procedures and how these systems are used."
   },
   "questions": {
     "wants_ticket": {
@@ -19,9 +19,9 @@
       }
     },
     "needs_internal_docs": {
-      "instructions": "Does answering `latest_user_message` need NBCU's internal documentation, such as its forms, procedures, policies or how the team uses its internal systems?",
+      "instructions": "Does answering `latest_user_message` need the company's internal documentation, such as its forms, procedures, policies or how the team uses its internal systems?",
       "criteria": {
-        "true": "The answer is specific to NBCU, such as \"How do I submit the media maintenance form?\" or \"What is the internal process for requesting a new channel?\"",
+        "true": "The answer is specific to the company, such as \"How do I submit the media maintenance form?\" or \"What is the internal process for requesting a new channel?\"",
         "false": "Public knowledge or casual conversation would answer it, such as \"What is HLS?\", \"Hi, how are you?\" or a request to search the web."
       }
     }
