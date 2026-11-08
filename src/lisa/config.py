@@ -17,11 +17,11 @@ class Settings(BaseSettings):
 
     #Primary Model
     model_provider: str = "openai"
-    model_name: str = "gpt-5.6-sol"
+    model_name: str = "gpt-5-nano"
 
     #Fallback Model
-    fallback_model_provider: str = "openai"
-    fallback_model_name: str = "gpt-5-nano"
+    fallback_model_provider: str = "nvidia"
+    fallback_model_name: str = "nvidia/nemotron-3-ultra-550b-a55b"
 
     #Router Model
     router_model_provider: str = "openai"
