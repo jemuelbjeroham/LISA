@@ -23,7 +23,17 @@ class Settings(BaseSettings):
     fallback_model_provider: str = "nvidia"
     fallback_model_name: str = "nvidia/nemotron-3-ultra-550b-a55b"
 
-    #Router Model
+    #Jev Model (orchestrator primary router)
+    # Pinned to a versioned ID: routing thresholds are tuned against it,
+    # and the `jev-latest` alias moves when TypeSafe ships a new release.
+    jev_model_name: str = "jev-1.14.0"
+    jev_timeout_seconds: float = 10.0
+    typesafe_api_key: str | None = Field(
+        default=None,
+        validation_alias="TYPESAFE_API_KEY",
+    )
+
+    #Router Model (orchestrator fallback when Jev fails or is unsure)
     router_model_provider: str = "openai"
     router_model_name: str = "gpt-5-nano"
     openai_token: str = Field(validation_alias="OPENAI_API_KEY")
