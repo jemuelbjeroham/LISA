@@ -1,6 +1,7 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain_openai import ChatOpenAI
+from typesafe_sdk import TypeSafeClient
 
 from lisa.config import Settings
 
@@ -61,6 +62,13 @@ def create_thinking_chat_model(settings: Settings) -> BaseChatModel:
         )
 
     if settings.model_provider == "openai":
+        if not _is_openai_reasoning_model(settings.model_name):
+            # Non-reasoning models (e.g. gpt-4.1-nano) reject the `reasoning` param.
+            return ChatOpenAI(
+                model=settings.model_name,
+                api_key=settings.openai_token,
+                use_responses_api=True,
+            )
         return ChatOpenAI(
             model=settings.model_name,
             api_key=settings.openai_token,
@@ -70,8 +78,23 @@ def create_thinking_chat_model(settings: Settings) -> BaseChatModel:
             },
             use_responses_api=True,
         )
-    
+
     raise ValueError(f"Unsupported Model Provider: {settings.model_provider}")
+
+
+def _is_openai_reasoning_model(model_name: str) -> bool:
+    name = model_name.lower()
+    return name.startswith(("gpt-5", "o1", "o3", "o4"))
+
+def create_jev_model(settings: Settings) -> TypeSafeClient:
+    if not settings.typesafe_api_key:
+        raise ValueError("TYPESAFE_API_KEY is required to use the Jev model")
+
+    return TypeSafeClient(
+        api_key=settings.typesafe_api_key,
+        model=settings.jev_model_name,
+        timeout=settings.jev_timeout_seconds,
+    )
 
 def create_router_model(settings: Settings) -> BaseChatModel:
     if settings.router_model_provider =="openai":

@@ -1,9 +1,11 @@
 import logging
 import time
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 
+from lisa.jev_router import JevRouter
 from lisa.routing import Route, RoutingDecision
 from lisa.state import LISAState
 
@@ -14,11 +16,49 @@ RETRY_DELAY_SECONDS = 0.5
 
 
 class Orchestrator:
-    def __init__(self, model: BaseChatModel, routing_prompt: str):
+    """Routes each new request: Jev first, the LLM router as fallback.
+
+    The LLM router (`model`) handles the request when Jev is not configured,
+    when the Jev call fails, or when Jev's answers do not settle the route.
+    """
+
+    def __init__(
+        self,
+        model: BaseChatModel,
+        routing_prompt: str,
+        jev_router: JevRouter | None = None,
+    ) -> None:
         self.model = model.with_structured_output(RoutingDecision)
         self.routing_prompt = routing_prompt
+        self.jev_router = jev_router
 
-    def route(self, state: LISAState):
+    def route(self, state: LISAState) -> dict[str, Any]:
+        decision = self._route_with_jev(state)
+        if decision is not None:
+            return self._result(decision.route)
+        return self._route_with_llm(state)
+
+    def _route_with_jev(self, state: LISAState) -> RoutingDecision | None:
+        if self.jev_router is None:
+            return None
+        try:
+            decision = self.jev_router.classify(state["messages"])
+        except Exception:
+            logger.exception("Jev routing failed; falling back to LLM router")
+            return None
+        if decision is None:
+            logger.info("Jev routing unsettled; falling back to LLM router")
+        return decision
+
+    @staticmethod
+    def _result(route: Route) -> dict[str, Any]:
+        return {
+            "route": route,
+            "active_route": route,
+            "agent_handoff": None,
+        }
+
+    def _route_with_llm(self, state: LISAState) -> dict[str, Any]:
         messages = [
             SystemMessage(content=self.routing_prompt),
             *state["messages"],
@@ -32,21 +72,15 @@ class Orchestrator:
                     MAX_ROUTING_ATTEMPTS,
                 )
 
-                decision = self.model.invoke(messages)
-
-                # Validate the result even when structured output is enabled.
-                decision = RoutingDecision.model_validate(decision)
+                raw_decision = self.model.invoke(messages)
+                decision = RoutingDecision.model_validate(raw_decision)
 
                 logger.info(
                     "Intent classified successfully: route=%s",
                     decision.route.value,
                 )
 
-                return {
-                    "route": decision.route,
-                    "active_route": decision.route,
-                    "agent_handoff": None,
-                }
+                return self._result(decision.route)
 
             except Exception:
                 logger.exception(
@@ -58,7 +92,6 @@ class Orchestrator:
                 if attempt < MAX_ROUTING_ATTEMPTS:
                     time.sleep(RETRY_DELAY_SECONDS * attempt)
 
-        # Controlled fallback: keep the conversation moving.
         fallback_route = Route.GENERAL_ENQUIRY
 
         logger.error(
@@ -66,8 +99,4 @@ class Orchestrator:
             fallback_route.value,
         )
 
-        return {
-            "route": fallback_route,
-            "active_route": fallback_route,
-            "agent_handoff": None,
-        }
+        return self._result(fallback_route)

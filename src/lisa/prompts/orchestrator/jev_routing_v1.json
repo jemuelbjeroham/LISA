@@ -1,0 +1,29 @@
+{
+  "state": {
+    "assistant": "LISA, an assistant for the NBCUniversal (NBCU) Distribution Engineering team, which runs broadcast and video distribution: channels, feeds, streams and media delivery workflows.",
+    "internal_systems": "SkyPath, Amagi, TAG, MediaProxy and Techex are video distribution systems the team operates. NBCU's internal documentation describes the team's forms, approvals, procedures and how these systems are used."
+  },
+  "questions": {
+    "wants_ticket": {
+      "instructions": "In `latest_user_message`, is the user asking LISA to create, submit, update or look up a support, service or incident ticket?",
+      "criteria": {
+        "true": "The user wants a ticket action, such as \"Create a ticket for channel CH398 having no video\" or \"What's the status of ticket 4521?\"",
+        "false": "The user wants something else, such as help understanding or fixing a problem, even when the problem might later need a ticket."
+      }
+    },
+    "wants_problem_solved": {
+      "instructions": "In `latest_user_message`, does the user want help finding the cause of, or fixing, a specific problem with a system, channel, feed, stream or workflow?",
+      "criteria": {
+        "true": "The user describes something that is failing or behaving abnormally and wants it explained, diagnosed or resolved, such as \"The Amagi feed is down, help me find the cause\" or \"The stream is buffering. What should I check first?\"",
+        "false": "The user asks how something works or which procedure to follow, with no specific failure to investigate, such as \"How does SkyPath failover work?\""
+      }
+    },
+    "needs_internal_docs": {
+      "instructions": "Does answering `latest_user_message` need NBCU's internal documentation, such as its forms, procedures, policies or how the team uses its internal systems?",
+      "criteria": {
+        "true": "The answer is specific to NBCU, such as \"How do I submit the media maintenance form?\" or \"What is the internal process for requesting a new channel?\"",
+        "false": "Public knowledge or casual conversation would answer it, such as \"What is HLS?\", \"Hi, how are you?\" or a request to search the web."
+      }
+    }
+  }
+}

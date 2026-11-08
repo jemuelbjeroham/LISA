@@ -6,29 +6,34 @@ from typing import Self
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage
 from openai import AsyncOpenAI
+from typesafe_sdk import TypeSafeClient
 
 from lisa.agents.general_enquiry import GeneralEnquiry
+from lisa.agents.knowledge_assistant import KnowledgeAssistant
 from lisa.agents.mem_agent import MemoryAgent
-from lisa.agents.technical_clarification import TechnicalClarificationAgent
+from lisa.agents.troubleshooting_agent import TroubleshootingAgent
 from lisa.config import Settings
 from lisa.context import LISAContext
 from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
 from lisa.guardrails.input_moderation import OpenAIInputModerator
+from lisa.guardrails.hitl.service import ApprovalService
+from lisa.guardrails.hitl.context import automatic_memory_enabled
 from lisa.infrastructure.postgres.database import Database
 from lisa.infrastructure.postgres.memory_dependencies import (
     memory_dependencies,
 )
-from lisa.knowledge.mcp_retriever import MCPKnowledgeRetriever
+from lisa.jev_router import JevRouter, parse_jev_routing_prompt
 from lisa.mcp.client import MCPClient
+from lisa.message_context import user_message
 from lisa.memory.workflow import MemoryWorkflow
 from lisa.model import (
     create_chat_model,
     create_fallback_model,
+    create_jev_model,
     create_router_model,
-    create_technical_model,
     create_thinking_chat_model,
 )
 from lisa.observability import (
@@ -48,6 +53,7 @@ class LISA:
     def __init__(self, model: BaseChatModel | None = None, 
                  thinking_model: BaseChatModel | None = None, 
                  router_model: BaseChatModel | None = None,
+                 jev_model: TypeSafeClient | None = None,
                  fallback_model: BaseChatModel | None = None,
                  technical_model: BaseChatModel | None = None,
                  retrieval_planner: RetrievalPlanner | None = None,
@@ -57,17 +63,23 @@ class LISA:
         self.fallback_model = fallback_model
         self.thinking_model = thinking_model
         self.router_model = router_model
+        self.jev_model = jev_model
         self.technical_model = technical_model
         self.retrieval_planner = retrieval_planner
         self.graph = None
         self.mcp_client: MCPClient | None = None
         self.database: Database | None = None
+        self.hitl = None
+        self._hitl_recovery_task = None
         self.input_moderator = None
         if conversation_store is None:
             raise ValueError("conversation_store must be provided")
         self.conversation_store = conversation_store
         self.orchestrator = None
-        self.technical_clarification_agent = None
+        self.knowledge_assistant_agent = None
+        self.troubleshooting_agent = None
+        self.butler = None
+        self.specialist = None
         self.general_enquiry_agent = None
         self.memory_agent = None
         self.exit_stack = AsyncExitStack()
@@ -92,6 +104,8 @@ class LISA:
             messages: list[BaseMessage],
             conversation_id: UUID,
     ) -> None:
+        if not automatic_memory_enabled():
+            return
         if self.memory_agent is None or self.database is None:
             logger.warning("Memory processing is unavailable")
             return
@@ -213,7 +227,9 @@ class LISA:
         else:
             state["enable_thinking"] = enable_thinking
 
-        state["messages"].append(HumanMessage(content=message))
+        current_message = user_message(message)
+        state["hitl_suspended"] = None
+        state["messages"].append(current_message)
 
         logger.debug(
             "Invoking conversation graph: conversation_id=%s, messages=%d",
@@ -286,6 +302,8 @@ class LISA:
             )
             raise
 
+        if result.get("hitl_suspended"):
+            return "Approval required. Retrieve the pending approval before continuing this task."
         response = result["messages"][-1]
 
         logger.info(
@@ -297,7 +315,7 @@ class LISA:
         self._schedule_memory_processing(
             user_id=user_id,
             messages=[
-                HumanMessage(content=message),
+                current_message,
                 response,
             ],
             conversation_id=conversation_id,
@@ -346,7 +364,9 @@ class LISA:
             state["enable_thinking"] = enable_thinking
             state["handoff_count"] = 0
 
-        state["messages"].append(HumanMessage(content=message))
+        current_message = user_message(message)
+        state["hitl_suspended"] = None
+        state["messages"].append(current_message)
 
         if self.database is None:
             raise RuntimeError("Database is not initialized")
@@ -458,7 +478,7 @@ class LISA:
                     self._schedule_memory_processing(
                         user_id=user_id,
                         messages=[
-                            HumanMessage(content=message),
+                            current_message,
                             messages[-1],
                         ],
                         conversation_id=conversation_id,
@@ -503,7 +523,12 @@ class LISA:
         logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
         settings = Settings()
         self.observability = LISAObservability(client=create_langfuse_client(settings))
-        self.langfuse_handler = create_langfuse_handler()
+        self.exit_stack.callback(self.observability.flush)
+        self.langfuse_handler = (
+            create_langfuse_handler(public_key=settings.langfuse_public_key)
+            if self.observability.client is not None
+            else None
+        )
         moderation_client = AsyncOpenAI(
             api_key=settings.openai_token,
         )
@@ -512,6 +537,11 @@ class LISA:
         )
         self.database = Database(settings)
         self.exit_stack.push_async_callback(self.database.close)
+        from functools import partial
+        from lisa.guardrails.hitl.continuation import continue_agent
+        self.hitl = ApprovalService(self.database)
+        self.hitl.continuation_runner = partial(continue_agent, self)
+        await self.hitl.recover()
         logger.debug(
             "Loaded application settings: model_provider=%s, router_model_provider=%s, "
             "mcp_server_command=%s",
@@ -525,6 +555,19 @@ class LISA:
             self.thinking_model = create_thinking_chat_model(settings)
         if self.router_model is None:
             self.router_model = create_router_model(settings)
+        if self.jev_model is None:
+            if settings.typesafe_api_key:
+                self.jev_model = create_jev_model(settings)
+                self.exit_stack.callback(self.jev_model.close)
+                logger.info(
+                    "Jev model initialized: model_name=%s",
+                    settings.jev_model_name,
+                )
+            else:
+                logger.warning(
+                    "TYPESAFE_API_KEY not set; orchestrator will route with "
+                    "the LLM router only"
+                )
         if self.fallback_model is None:
             logger.info(
                 "Initializing fallback model: provider=%s, model_name=%s",
@@ -540,20 +583,6 @@ class LISA:
             except Exception:
                 logger.exception("Failed to initialize fallback model")
                 raise
-        if self.technical_model is None:
-            logger.info(
-                "Initializing technical model: provider=%s, model_name=%s",
-                settings.technical_model_provider,
-                settings.technical_model_name,
-            )
-            try:
-                self.technical_model = create_technical_model(settings)
-                logger.info(
-                    "Technical model has been initialized: %s",
-                    type(self.technical_model).__name__,
-                )
-            except Exception:
-                logger.exception("Failed to initialize Technical Model")
         self.mcp_client = await self.exit_stack.enter_async_context(
             MCPClient(
                 command=settings.mcp_server_command,
@@ -569,34 +598,42 @@ class LISA:
                 }
             )
         )
-        retriever = MCPKnowledgeRetriever(
-            client=self.mcp_client,
-        )
-        routing_prompt = load_prompt("orchestrator/routing_v2.txt")
-        technical_prompt = load_prompt("technical_clarification/technical_clarification_v1.txt")
-        general_enquiry_prompt = load_prompt("general_enquiry/general_enquiry_v1.txt")
-        hyde_prompt = load_prompt("technical_clarification/hyde_v1.txt")
-        retrieval_planner_prompt = load_prompt("technical_clarification/retrieval_planner_v1.txt")
-        memory_agent_prompt = load_prompt("memory/memory_agent_v1.txt")
+        routing_prompt = load_prompt("orchestrator/routing_distribution_engineering_v2.txt")
+        identity = load_prompt("Identity.txt").rstrip()
+        general_enquiry_prompt = identity + "\n\n" + load_prompt("general_enquiry/general_enquiry_v2.txt")
+        knowledge_assistant_prompt = identity + "\n\n" + load_prompt("knowledge_assistant/knowledge_assistant_v1.txt")
+        troubleshooting_prompt = identity + "\n\n" + load_prompt("troubleshooting_agent/troubleshooting_agent_v1.txt")
+        memory_agent_prompt = load_prompt("memory/memory_agent_v2.txt")
+        jev_router = None
+        if self.jev_model is not None:
+            jev_routing_prompt = parse_jev_routing_prompt(
+                load_prompt("orchestrator/jev_routing_v1.json")
+            )
+            jev_router = JevRouter(self.jev_model, jev_routing_prompt)
         self.orchestrator = Orchestrator(
             model=self.router_model,
             routing_prompt=routing_prompt,
+            jev_router=jev_router,
         )
         self.memory_agent = MemoryAgent(
             model=self.model,
             prompt=memory_agent_prompt,
         )
-        self.retrieval_planner = RetrievalPlanner(
-            model=self.router_model,
-            prompt=retrieval_planner_prompt,
-        )
-        self.technical_clarification_agent = TechnicalClarificationAgent(
-            model=self.technical_model,
-            retriever=retriever,
-            system_prompt=technical_prompt,
-            hyde_prompt=hyde_prompt,
-            retrieval_planner=self.retrieval_planner,
+        self.knowledge_assistant_agent = KnowledgeAssistant(
+            model=self.model,
+            fallback_model=self.fallback_model,
+            thinking_model=self.thinking_model,
+            system_prompt=knowledge_assistant_prompt,
             input_moderator=self.input_moderator,
+            mcp_client=self.mcp_client,
+        )
+        self.troubleshooting_agent = TroubleshootingAgent(
+            model=self.model,
+            fallback_model=self.fallback_model,
+            thinking_model=self.thinking_model,
+            system_prompt=troubleshooting_prompt,
+            input_moderator=self.input_moderator,
+            mcp_client=self.mcp_client,
         )
         self.general_enquiry_agent = GeneralEnquiry(
             model=self.model,
@@ -606,22 +643,36 @@ class LISA:
             mcp_client=self.mcp_client,
             input_moderator=self.input_moderator,
         )
+        await self.knowledge_assistant_agent.initialize_tools()
+        await self.troubleshooting_agent.initialize_tools()
         await self.general_enquiry_agent.initialize_tools()
+        for agent, method_name in (
+            (self.orchestrator, "route"),
+            (self.memory_agent, "analyze"),
+            (self.knowledge_assistant_agent, "run"),
+            (self.troubleshooting_agent, "run"),
+            (self.general_enquiry_agent, "run"),
+            (self.hitl, "continuation_runner"),
+        ):
+            self.observability.instrument(agent, method_name, self.langfuse_handler)
         self.routing_policy = RoutingPolicy()
         self.graph = build_graph(
             orchestrator=self.orchestrator,
-            technical_clarification_agent=self.technical_clarification_agent,
+            knowledge_assistant_agent=self.knowledge_assistant_agent,
+            troubleshooting_agent=self.troubleshooting_agent,
             general_enquiry_agent=self.general_enquiry_agent,
             routing_policy=self.routing_policy,
         )
         logger.info(
             "LISA has been initialized: model=%s, thinking_model=%s, router_model=%s, "
-            "fallback_model=%s",
+            "jev_model=%s, fallback_model=%s",
             type(self.model).__name__,
             type(self.thinking_model).__name__,
             type(self.router_model).__name__,
+            type(self.jev_model).__name__ if self.jev_model is not None else None,
             type(self.fallback_model).__name__,
         )
+        self._hitl_recovery_task = asyncio.create_task(self.hitl.recovery_loop(), name="hitl-recovery")
         return self
     
     async def __aexit__(
@@ -635,6 +686,9 @@ class LISA:
             exc_type.__name__ if exc_type else None,
         )
         try:
+            if self._hitl_recovery_task is not None:
+                self._hitl_recovery_task.cancel()
+                await asyncio.gather(self._hitl_recovery_task, return_exceptions=True)
             if self._memory_tasks:
                 logger.info(
                     "Waiting for background memory tasks: count=%d",
