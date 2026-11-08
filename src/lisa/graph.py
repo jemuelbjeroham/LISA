@@ -6,7 +6,8 @@ from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 
 from lisa.agents.general_enquiry import GeneralEnquiry
-from lisa.agents.technical_clarification import TechnicalClarificationAgent
+from lisa.agents.knowledge_assistant import KnowledgeAssistant
+from lisa.agents.troubleshooting_agent import TroubleshootingAgent
 from lisa.context import LISAContext
 from lisa.orchestrator import Orchestrator
 from lisa.routing import Route, RoutingAction, RoutingPolicy
@@ -68,6 +69,8 @@ def record_handoff(state: LISAState) -> dict:
 
 
 def route_after_handoff(state: LISAState) -> str:
+    if state.get("hitl_suspended"):
+        return "end"
     if state.get("agent_handoff") is not None and state.get(
         "handoff_count", 0
     ) <= MAX_HANDOFFS:
@@ -78,17 +81,16 @@ def route_after_handoff(state: LISAState) -> str:
 
 def build_graph(
     orchestrator: Orchestrator,
-    technical_clarification_agent: TechnicalClarificationAgent,
+    knowledge_assistant_agent: KnowledgeAssistant,
+    troubleshooting_agent: TroubleshootingAgent,
     general_enquiry_agent: GeneralEnquiry,
     routing_policy: RoutingPolicy,
 ):
     builder = StateGraph(LISAState, context_schema=LISAContext)
 
     builder.add_node("orchestrator", orchestrator.route)
-    builder.add_node(
-        "technical_clarification",
-        technical_clarification_agent.run,
-    )
+    builder.add_node("knowledge_assistant", knowledge_assistant_agent.run)
+    builder.add_node("troubleshooting_agent", troubleshooting_agent.run)
     builder.add_node("general_enquiry", general_enquiry_agent.run)
     builder.add_node("record_handoff", record_handoff)
 
@@ -97,7 +99,8 @@ def build_graph(
         partial(route_entry, routing_policy=routing_policy),
         {
             "orchestrator": "orchestrator",
-            Route.TECHNICAL_CLARIFICATION.value: "technical_clarification",
+            Route.KNOWLEDGE_ASSISTANT.value: "knowledge_assistant",
+            Route.TROUBLESHOOTING_AGENT.value: "troubleshooting_agent",
             Route.GENERAL_ENQUIRY.value: "general_enquiry",
         },
     )
@@ -106,12 +109,14 @@ def build_graph(
         "orchestrator",
         route_from_state,
         {
-            Route.TECHNICAL_CLARIFICATION: "technical_clarification",
+            Route.KNOWLEDGE_ASSISTANT: "knowledge_assistant",
+            Route.TROUBLESHOOTING_AGENT: "troubleshooting_agent",
             Route.GENERAL_ENQUIRY: "general_enquiry",
         },
     )
 
-    builder.add_edge("technical_clarification", "record_handoff")
+    builder.add_edge("knowledge_assistant", "record_handoff")
+    builder.add_edge("troubleshooting_agent", "record_handoff")
     builder.add_edge("general_enquiry", "record_handoff")
 
     builder.add_conditional_edges(
