@@ -3,6 +3,7 @@ from langchain_core.messages import BaseMessage, SystemMessage
 
 from lisa.memory.decision import MemoryAgentResult
 from lisa.memory.models import Memory
+from lisa.message_context import with_system_time
 
 
 class MemoryAgent:
@@ -29,4 +30,4 @@ class MemoryAgent:
             *messages,
         ]
 
-        return await self.model.ainvoke(conversation)
+        return await self.model.ainvoke(with_system_time(conversation))

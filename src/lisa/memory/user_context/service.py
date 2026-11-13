@@ -2,6 +2,7 @@
 from typing import Any
 from uuid import UUID
 
+from lisa.guardrails.hitl.context import require_native_write
 from lisa.memory.user_context.models import UserPreference, UserProfile
 from lisa.memory.user_context.repository import UserContextRepository
 
@@ -29,6 +30,7 @@ class UserContextService:
         self,
         preference: UserPreference,
     ) -> UserPreference:
+        require_native_write(preference.user_id)
         return await self.repository.upsert_preference(preference)
 
     async def delete_preference(
@@ -37,6 +39,7 @@ class UserContextService:
         category: str,
         key: str,
     ) -> bool:
+        require_native_write(user_id)
         return await self.repository.delete_preference(
             user_id=user_id,
             category=category,

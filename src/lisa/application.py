@@ -18,17 +18,17 @@ from lisa.config import Settings
 from lisa.context import LISAContext
 from lisa.conversation.store import ConversationStore
 from lisa.graph import build_graph
-from lisa.guardrails.input_moderation import OpenAIInputModerator
-from lisa.guardrails.hitl.service import ApprovalService
 from lisa.guardrails.hitl.context import automatic_memory_enabled
+from lisa.guardrails.hitl.service import ApprovalService
+from lisa.guardrails.input_moderation import OpenAIInputModerator
 from lisa.infrastructure.postgres.database import Database
 from lisa.infrastructure.postgres.memory_dependencies import (
     memory_dependencies,
 )
 from lisa.jev_router import JevRouter, parse_jev_routing_prompt
 from lisa.mcp.client import MCPClient
-from lisa.message_context import user_message
 from lisa.memory.workflow import MemoryWorkflow
+from lisa.message_context import user_message
 from lisa.model import (
     create_chat_model,
     create_fallback_model,
@@ -538,6 +538,7 @@ class LISA:
         self.database = Database(settings)
         self.exit_stack.push_async_callback(self.database.close)
         from functools import partial
+
         from lisa.guardrails.hitl.continuation import continue_agent
         self.hitl = ApprovalService(self.database)
         self.hitl.continuation_runner = partial(continue_agent, self)

@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from lisa.guardrails.hitl.context import require_native_write
 from lisa.memory.models import Memory
 from lisa.memory.repository import MemoryRepository
 
@@ -9,6 +10,7 @@ class MemoryService:
         self.repository = repository
 
     async def create(self, memory: Memory) -> Memory:
+        require_native_write(memory.user_id)
         return await self.repository.create(memory)
 
     async def get(self, memory_id: UUID) -> Memory | None:
@@ -18,9 +20,11 @@ class MemoryService:
         return await self.repository.list_by_user(user_id)
 
     async def update(self, memory: Memory) -> Memory:
+        require_native_write(memory.user_id)
         return await self.repository.update(memory)
 
     async def delete(self, memory_id: UUID) -> None:
+        require_native_write(None)
         await self.repository.delete(memory_id)
 
     async def find_duplicate(self, memory: Memory) -> Memory | None:

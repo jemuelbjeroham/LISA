@@ -22,6 +22,10 @@ class MCPKnowledgeRetriever:
 
         response = json.loads(result.content[0].text)
 
+        context = response.get("context")
+        if isinstance(context, str) and context.strip():
+            return [context]
+
         return [
             item["content"] for item in response["results"]
         ]

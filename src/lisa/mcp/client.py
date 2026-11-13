@@ -6,6 +6,8 @@ from typing import Self
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from lisa.guardrails.hitl.dispatcher import guard_mcp
+
 
 class MCPClient:
     def __init__(self, command: str, args: list[str], cwd: Path, env: dict[str,str]) -> None:
@@ -44,5 +46,5 @@ class MCPClient:
         if self.session is None:
             raise RuntimeError("MCP client is not connected")
 
-        return await self.session.call_tool(name, arguments)
+        return await guard_mcp(name, arguments, self.session.call_tool)
     

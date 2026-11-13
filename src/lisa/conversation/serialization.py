@@ -35,12 +35,12 @@ class ConversationStateSerializer:
             "messages": messages,
             "route": (
                 Route(data["route"])
-                if data["route"] is not None
+                if data["route"] not in (None, "technical_clarification")
                 else None
             ),
             "active_route": (
                 Route(data["active_route"])
-                if data["active_route"] is not None
+                if data["active_route"] not in (None, "technical_clarification")
                 else None
             ),
             "agent_handoff": data["agent_handoff"],

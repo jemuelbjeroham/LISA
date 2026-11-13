@@ -1,5 +1,6 @@
 
 import asyncio
+import json
 import logging
 from typing import Any
 
@@ -14,8 +15,17 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.utils import message_chunk_to_message
 from langgraph.config import get_stream_writer
+from langgraph.runtime import Runtime
 
-from lisa.agents.base import BaseAgent
+from lisa.agents.general_enquiry import (
+    MAX_TOOL_ITERATIONS,
+    MCP_TOOL_ALLOWLIST,
+    GeneralEnquiry,
+)
+from lisa.context import LISAContext
+from lisa.guardrails.hitl.dispatcher import ApprovalSuspended, propose_native
+from lisa.guardrails.hitl.jira import JIRA_TOOLS
+from lisa.guardrails.hitl.policy import GuardError
 from lisa.guardrails.input_moderation import (
     INPUT_BLOCKED_MESSAGE,
     INPUT_MODERATION_ERROR_MESSAGE,
@@ -23,6 +33,8 @@ from lisa.guardrails.input_moderation import (
     InputModerator,
 )
 from lisa.knowledge.protocol import KnowledgeRetriever
+from lisa.mcp.client import MCPClient
+from lisa.message_context import with_system_time
 from lisa.retrieval.planning import RetrievalPlanner
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
@@ -35,7 +47,7 @@ RETRY_DELAY_SECONDS = 0.5
 MAX_HANDOFF_CORRECTION_ATTEMPTS = 2
 MAX_HANDOFF_REASON_LENGTH = 2000
 
-LOCAL_TOOL_ALLOWLIST = frozenset({"handoff"})
+LOCAL_TOOL_ALLOWLIST = frozenset({"handoff", "save_memory"})
 
 HANDOFF_SCHEMA = {
     "type": "object",
@@ -65,7 +77,7 @@ class HandoffArgumentsValidationError(ValueError):
     """Raised when a handoff tool call has invalid arguments."""
 
 
-class TechnicalClarificationAgent(BaseAgent):
+class TechnicalClarificationAgent(GeneralEnquiry):
     def __init__(
         self,
         model: BaseChatModel,
@@ -74,10 +86,17 @@ class TechnicalClarificationAgent(BaseAgent):
         retriever: KnowledgeRetriever,
         retrieval_planner: RetrievalPlanner,
         input_moderator: InputModerator,
+        mcp_client: MCPClient | None = None,
+        fallback_model: BaseChatModel | None = None,
+        thinking_model: BaseChatModel | None = None,
     ) -> None:
         super().__init__(
             model=model,
             system_prompt=system_prompt,
+            fallback_model=fallback_model or model,
+            thinking_model=thinking_model or model,
+            mcp_client=mcp_client,
+            input_moderator=input_moderator,
         )
 
         # Keep the original model for HyDE generation.
@@ -168,7 +187,7 @@ class TechnicalClarificationAgent(BaseAgent):
                 )
             )
 
-    async def run(self, state: LISAState) -> dict[str, Any]:
+    async def run(self, state: LISAState, runtime: Runtime[LISAContext] = None) -> dict[str, Any]:
         """Execute one technical clarification turn with bounded retries."""
         writer = get_stream_writer()
         messages = state.get("messages", [])
@@ -357,6 +376,8 @@ class TechnicalClarificationAgent(BaseAgent):
                 await self._generate_response_with_tool_corrections(
                     prompt_messages,
                     writer=writer,
+                    runtime=runtime,
+                    state=state,
                 )
             )
 
@@ -390,6 +411,9 @@ class TechnicalClarificationAgent(BaseAgent):
                 "messages": [AIMessage(content=response_text)],
                 "knowledge_context": knowledge,
             }
+
+        except ApprovalSuspended as exc:
+            return {"hitl_suspended": exc.event.execution_id, "knowledge_context": knowledge}
 
         except asyncio.CancelledError:
             # Preserve task cancellation.
@@ -432,18 +456,20 @@ class TechnicalClarificationAgent(BaseAgent):
         self,
         messages: list,
         writer: Any,
+        runtime: Runtime[LISAContext] | None = None,
+        state: dict | None = None,
     ) -> tuple[AIMessage, dict[str, str] | None]:
         """
         Generate a response and validate any requested tool calls.
 
-        Only handoff is permitted. Invalid or unauthorized tool calls receive
-        feedback, with at most two correction attempts. This method does not
-        execute tools.
+        Validate and execute registered tools with bounded correction attempts.
 
         Answer text is streamed as model chunks arrive. Tool calls are
         inspected after the model stream completes.
         """
         correction_attempts = 0
+        tool_iterations = 0
+        approval_emitted = ""
 
         while True:
             assistant_message = await self._generate_response_with_retries(
@@ -457,13 +483,17 @@ class TechnicalClarificationAgent(BaseAgent):
             # Preserve the model's tool-call message so each ToolMessage
             # correctly refers to its tool_call_id.
             messages.append(assistant_message)
+            tool_iterations += 1
+            if tool_iterations > MAX_TOOL_ITERATIONS:
+                return AIMessage(content=SAFE_ERROR_MESSAGE), None
 
-            for tool_call in assistant_message.tool_calls:
+            approval_emitted += self._extract_text(assistant_message.content)
+            for cursor, tool_call in enumerate(assistant_message.tool_calls):
                 tool_name = tool_call.get("name")
                 call_id = tool_call.get("id", "")
                 arguments = tool_call.get("args")
 
-                if tool_name not in LOCAL_TOOL_ALLOWLIST:
+                if tool_name not in LOCAL_TOOL_ALLOWLIST | MCP_TOOL_ALLOWLIST:
                     correction_attempts += 1
 
                     logger.warning(
@@ -476,7 +506,7 @@ class TechnicalClarificationAgent(BaseAgent):
                         "TechnicalClarificationAgent. Do not call it again."
                     )
 
-                else:
+                elif tool_name == "handoff":
                     try:
                         validated_arguments = (
                             self._validate_handoff_arguments(arguments)
@@ -488,6 +518,37 @@ class TechnicalClarificationAgent(BaseAgent):
                         feedback = (
                             f"{exc} This tool call was not executed. "
                             "Correct the arguments and try again."
+                        )
+
+                else:
+                    try:
+                        if tool_name in JIRA_TOOLS:
+                            validate(instance=arguments, schema=self.tool_schemas[tool_name])
+                            event = await propose_native(arguments, agent="technical_clarification", messages=messages,
+                                state=state or {"messages": [message for message in messages if message.type != "system"]},
+                                call_id=call_id, cursor=cursor, iteration=tool_iterations, emitted=approval_emitted)
+                            writer(event)
+                            raise ApprovalSuspended(event)
+                        if tool_name == "save_memory":
+                            if runtime is None:
+                                raise GuardError()
+                            if not isinstance(arguments, dict):
+                                raise ValueError("Tool arguments must be a JSON object")
+                            result = await self.available_tools[tool_name].ainvoke(
+                                {**arguments, "runtime": runtime}
+                            )
+                        else:
+                            result = await self._execute_mcp_tool(tool_name, arguments)
+                        feedback = str(result)
+                    except ApprovalSuspended:
+                        raise
+                    except GuardError as exc:
+                        feedback = json.dumps(exc.result())
+                    except Exception:
+                        logger.exception("Technical tool failed: %s", tool_name)
+                        feedback = (
+                            f"Tool '{tool_name}' failed or its arguments were invalid. "
+                            "Do not repeat the same call automatically."
                         )
 
                 if correction_attempts > MAX_HANDOFF_CORRECTION_ATTEMPTS:
@@ -525,7 +586,7 @@ class TechnicalClarificationAgent(BaseAgent):
             emitted_text = False
 
             try:
-                async for chunk in self.model.astream(messages):
+                async for chunk in self.model.astream(with_system_time(messages)):
                     if not isinstance(chunk, AIMessageChunk):
                         logger.warning(
                             "Ignoring unexpected model chunk type: %s",
@@ -603,7 +664,7 @@ class TechnicalClarificationAgent(BaseAgent):
         try:
             response = await self._retry_async(
                 operation="HyDE generation",
-                call=lambda: self.hyde_model.ainvoke(messages),
+                call=lambda: self.hyde_model.ainvoke(with_system_time(messages)),
             )
 
         except asyncio.CancelledError:
@@ -653,7 +714,7 @@ class TechnicalClarificationAgent(BaseAgent):
         try:
             response = await self._retry_async(
                 operation="scope check",
-                call=lambda: self.model.ainvoke(messages),
+                call=lambda: self.model.ainvoke(with_system_time(messages)),
             )
 
         except asyncio.CancelledError:
@@ -723,7 +784,7 @@ class TechnicalClarificationAgent(BaseAgent):
             try:
                 response = await self._retry_async(
                     operation="scope-check correction",
-                    call=lambda: self.model.ainvoke(messages),
+                    call=lambda: self.model.ainvoke(with_system_time(messages)),
                 )
 
             except asyncio.CancelledError:

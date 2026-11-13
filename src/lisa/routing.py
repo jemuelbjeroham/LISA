@@ -5,7 +5,8 @@ from pydantic import BaseModel
 
 class Route(StrEnum):
     GENERAL_ENQUIRY = "general_enquiry"
-    TECHNICAL_CLARIFICATION = "technical_clarification"
+    KNOWLEDGE_ASSISTANT = "knowledge_assistant"
+    TROUBLESHOOTING_AGENT = "troubleshooting_agent"
 
 class RoutingAction(StrEnum):
     CONTINUE = "continue"

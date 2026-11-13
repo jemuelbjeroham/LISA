@@ -4,6 +4,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from pydantic import BaseModel
 
+from lisa.message_context import with_system_time
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,7 +40,7 @@ class RetrievalPlanner:
         logger.info("Generating retrieval plan")
 
         decision = await self.model.ainvoke(
-            planner_messages
+            with_system_time(planner_messages)
         )
 
         logger.info(

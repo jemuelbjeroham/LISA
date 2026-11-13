@@ -7,9 +7,14 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
-from lisa.guardrails.hitl.context import Principal, current_execution, native_runtime, native_write
-from lisa.guardrails.hitl.models import Approval, AuditEvent, Claim, Execution, Revision
+from lisa.guardrails.hitl.context import (
+    Principal,
+    current_execution,
+    native_runtime,
+    native_write,
+)
 from lisa.guardrails.hitl.jira import JIRA_TOOLS, JiraAdapter, verify_capability
+from lisa.guardrails.hitl.models import Approval, AuditEvent, Claim, Execution, Revision
 from lisa.guardrails.hitl.policy import (
     POLICY_VERSION,
     GuardError,

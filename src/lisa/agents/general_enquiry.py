@@ -1,4 +1,5 @@
 
+import json
 import logging
 
 from jsonschema import ValidationError, validate
@@ -10,6 +11,7 @@ from langgraph.runtime import Runtime
 
 from lisa.agents.base import BaseAgent
 from lisa.context import LISAContext
+from lisa.guardrails.hitl.policy import REGISTRY, GuardError
 from lisa.guardrails.input_moderation import (
     INPUT_BLOCKED_MESSAGE,
     INPUT_MODERATION_ERROR_MESSAGE,
@@ -18,6 +20,7 @@ from lisa.guardrails.input_moderation import (
     InputModerator,
 )
 from lisa.mcp.client import MCPClient
+from lisa.message_context import with_system_time
 from lisa.model_resilience import ModelResilience
 from lisa.state import LISAState
 from lisa.streaming.events import StreamEvent
@@ -51,10 +54,7 @@ LOCAL_TOOL_ALLOWLIST = frozenset(
 )
 
 MCP_TOOL_ALLOWLIST = frozenset(
-    {
-        "web_search",
-        "web_search_with_content",
-    }
+    name for name, policy in REGISTRY.items() if policy.namespace == "mcp"
 )
 
 MAX_TOOL_ITERATIONS = 5
@@ -79,6 +79,8 @@ class ToolArgumentsValidationError(ValueError):
 
 
 class GeneralEnquiry(BaseAgent):
+    agent_name = "general_enquiry"
+
     def __init__(
         self,
         model: BaseChatModel,
@@ -263,6 +265,8 @@ class GeneralEnquiry(BaseAgent):
 
         # Do not automatically retry tool execution after an error because
         # execution may have completed before the error was returned.
+        from lisa.guardrails.hitl.dispatcher import check_tool
+        await check_tool(name)
         result = await self.mcp_client.call_tool(name, arguments)
 
         if result.is_error:
@@ -450,6 +454,7 @@ class GeneralEnquiry(BaseAgent):
         )
 
         tool_iterations = 0
+        approval_emitted = ""
         validation_failures: dict[str, int] = {}
 
         while True:
@@ -461,7 +466,7 @@ class GeneralEnquiry(BaseAgent):
                     type(model).__name__,
                 )
 
-                stream = model.astream(messages)
+                stream = model.astream(with_system_time(messages))
 
             else:
                 logger.info(
@@ -470,7 +475,7 @@ class GeneralEnquiry(BaseAgent):
                     type(self.fallback_model).__name__,
                 )
 
-                stream = self.model_resilience.stream(messages)
+                stream = self.model_resilience.stream(with_system_time(messages))
 
             # Stream normal answer text as it arrives. We still assemble the
             # complete message so that tool calls can be handled afterwards.
@@ -666,7 +671,8 @@ class GeneralEnquiry(BaseAgent):
                     ]
                 }
 
-            for tool_call in assistant_message.tool_calls:
+            approval_emitted += extract_text(assistant_message.content)
+            for cursor, tool_call in enumerate(assistant_message.tool_calls):
                 tool_name = tool_call.get("name")
                 tool_args = tool_call.get("args")
                 call_id = tool_call.get("id", "")
@@ -706,6 +712,8 @@ class GeneralEnquiry(BaseAgent):
 
                         result = await tool.ainvoke(local_args)
 
+                    except GuardError as exc:
+                        result = json.dumps(exc.result())
                     except Exception:
                         logger.exception(
                             "Local tool execution failed: %s",
@@ -720,6 +728,15 @@ class GeneralEnquiry(BaseAgent):
 
                 elif tool_name in MCP_TOOL_ALLOWLIST:
                     try:
+                        from lisa.guardrails.hitl.dispatcher import propose_native
+                        from lisa.guardrails.hitl.jira import JIRA_TOOLS
+                        if tool_name in JIRA_TOOLS:
+                            validate(instance=tool_args, schema=self.tool_schemas[tool_name])
+                            event = await propose_native(tool_args, agent=self.agent_name, messages=messages,
+                                state=state, call_id=call_id, cursor=cursor, iteration=tool_iterations,
+                                emitted=approval_emitted)
+                            writer(event)
+                            return {"hitl_suspended": event.execution_id}
                         result = await self._execute_mcp_tool(
                             name=tool_name,
                             arguments=tool_args,
@@ -762,6 +779,8 @@ class GeneralEnquiry(BaseAgent):
                             "try again. Do not change the user's intent."
                         )
 
+                    except GuardError as exc:
+                        result = json.dumps(exc.result())
                     except PermissionError:
                         logger.warning(
                             "MCP tool authorization failed: %s",

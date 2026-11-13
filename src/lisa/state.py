@@ -16,3 +16,4 @@ class LISAState(TypedDict):
     knowledge_context: list[str]
     enable_thinking: bool
     handoff_count: int
+    hitl_suspended: str | None

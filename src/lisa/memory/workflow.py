@@ -5,6 +5,7 @@ from uuid import UUID
 from langchain_core.messages import BaseMessage
 
 from lisa.agents.mem_agent import MemoryAgent
+from lisa.guardrails.hitl.context import automatic_memory_enabled
 from lisa.memory.decision import MemoryAction, MemoryType
 from lisa.memory.models import Memory
 from lisa.memory.service import MemoryService
@@ -30,6 +31,8 @@ class MemoryWorkflow:
             user_id: UUID,
             messages: list[BaseMessage],
     ) -> list[Memory]:
+        if not automatic_memory_enabled():
+            return []
         existing_memories = await self.service.list_by_user(user_id)
         result = await self.agent.analyze(
             messages,
