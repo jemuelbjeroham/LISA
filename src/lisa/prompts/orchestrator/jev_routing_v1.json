@@ -1,6 +1,6 @@
 {
   "state": {
-    "assistant": "LISA, an assistant for the Distribution Engineering team, which runs broadcast and video distribution: channels, feeds, streams and media delivery workflows.",
+    "assistant": "LISA, an assistant for the Level 1 Engineering team, which runs broadcast and video distribution: channels, feeds, streams and media delivery workflows.",
     "internal_systems": "SkyPath, Amagi, TAG, MediaProxy and Techex are video distribution systems the team operates. The company's internal documentation describes the team's forms, approvals, procedures and how these systems are used."
   },
   "questions": {

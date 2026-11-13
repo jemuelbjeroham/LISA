@@ -520,7 +520,7 @@ class LISA:
         # )
 
     async def __aenter__(self) -> Self:
-        logger.info("Initializing LISA (Level1 Intelligent System and Assistant)")
+        logger.info("Initializing LISA (Level 1 Intelligent System and Assistant)")
         settings = Settings()
         self.observability = LISAObservability(client=create_langfuse_client(settings))
         self.exit_stack.callback(self.observability.flush)
@@ -599,7 +599,7 @@ class LISA:
                 }
             )
         )
-        routing_prompt = load_prompt("orchestrator/routing_distribution_engineering_v2.txt")
+        routing_prompt = load_prompt("orchestrator/routing_level1_engineering_v2.txt")
         identity = load_prompt("Identity.txt").rstrip()
         general_enquiry_prompt = identity + "\n\n" + load_prompt("general_enquiry/general_enquiry_v2.txt")
         knowledge_assistant_prompt = identity + "\n\n" + load_prompt("knowledge_assistant/knowledge_assistant_v1.txt")

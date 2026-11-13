@@ -145,7 +145,6 @@ async def test_mcp_denial_is_structured_actual_error_result(role, name, error):
     ("admin", "web_search_with_content"),
     ("admin", "search_knowledge"),
     ("admin", "health_check"),
-    ("admin", "onair_finder"),
     ("admin", "search_jira_tickets"),
 ])
 async def test_mcp_allowed_read_returns_actual_result_with_trusted_scope(role, name):

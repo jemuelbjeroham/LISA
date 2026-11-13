@@ -8,7 +8,7 @@ from lisa.prompts.loader import load_prompt
 PROMPT_DIR = Path(load_prompt.__code__.co_filename).parent
 
 APPLICATION_PROMPTS = {
-    "orchestrator/routing_distribution_engineering_v2.txt",
+    "orchestrator/routing_level1_engineering_v2.txt",
     "orchestrator/jev_routing_v1.json",
     "Identity.txt",
     "general_enquiry/general_enquiry_v2.txt",
@@ -23,10 +23,11 @@ def test_no_prompt_uses_the_old_delisa_name():
     assert offenders == []
 
 
-def test_identity_names_lisa_and_distribution_engineering():
+def test_identity_names_lisa_and_level1_engineering_team():
     identity = load_prompt("Identity.txt")
     assert "You are LISA" in identity
-    assert "Distribution Engineering" in identity
+    assert "Level 1 Engineering team" in identity
+    assert "Distribution Engineering" not in identity
 
 
 def test_application_loads_the_three_agent_prompts():
@@ -41,7 +42,7 @@ def test_application_loads_the_three_agent_prompts():
         assert load_prompt(path).strip()
 
 
-@pytest.mark.parametrize("path", ["orchestrator/routing_distribution_engineering_v2.txt", "orchestrator/routing_v2.txt"])
+@pytest.mark.parametrize("path", ["orchestrator/routing_level1_engineering_v2.txt", "orchestrator/routing_v2.txt"])
 def test_routing_prompt_describes_the_three_routes(path):
     routing = load_prompt(path)
     assert "LISA" in routing

@@ -1,4 +1,4 @@
-You are LISA's technical retrieval-query generator for Distribution Engineering.
+You are LISA's technical retrieval-query generator for the Level 1 Engineering team.
 
 The domain includes Video Streaming Engineering, Amagi Systems, Playout
 Engineering, TAG Monitoring, and MediaProxy Monitoring. Keep the artifact focused

@@ -84,7 +84,7 @@ def bind_owned(harness):
 
 
 @pytest.mark.parametrize("name,arguments", [
-    ("create_jira_ticket", {"subject": "Alarm", "description": "Loss", "core": "1", "side": "x"}),
+    ("create_jira_ticket", {"subject": "Alarm", "description": "Loss", "project_key": "OPS"}),
     ("update_jira_ticket", {"ticket_key": "OPS-123", "comment": "Recovered"}),
     ("close_ticket", {"ticket_id": "123"}),
 ])
@@ -122,30 +122,29 @@ async def test_jira_edit_reprepares_and_invalidates_old_revision(lifecycle):
     assert (await lifecycle.service.decide(lifecycle.actor, approval.id, 2, revised["arguments_hash"], "approve", "new"))["status"] == "approved"
 
 
-async def test_create_core_edit_reprepares_department_and_disallows_department_edit(lifecycle):
+async def test_create_edit_reprepares_generic_fields_and_disallows_unlisted_edits(lifecycle):
     # Cross-repo test: needs the sibling net-tools-app package installed.
     pytest.importorskip("net_tools_app")
     from net_tools_app.jira.service import JiraService
-    from net_tools_app.onair_finder.service import OnAirResult
 
-    finder = SimpleNamespace(find=AsyncMock(side_effect=lambda request: OnAirResult(
-        core=request.core, side=request.side, found=True, jira_core=f"X{request.core}g")))
-    jira = JiraService(SimpleNamespace(base_url="https://jira.example"))
+    jira = JiraService(SimpleNamespace(base_url="https://jira.example"), project_key="OPS")
 
     async def prepare(name, values):
-        return await jira.prepare(name, values, finder)
+        return await jira.prepare(name, values)
 
     lifecycle.service.jira.prepare = AsyncMock(side_effect=prepare)
-    arguments = {"subject": "Alarm", "description": "Loss", "core": "1", "side": "x"}
+    arguments = {"subject": "Alarm", "description": "Loss"}
     first = await lifecycle.service.propose(lifecycle.actor, lifecycle.conversation_id, "create_jira_ticket", arguments, "jira-turn", {})
     _, approval = bind_owned(lifecycle)
-    assert "department" not in first["editable_fields"]
-    assert first["effective_operation"]["payload"]["requestFieldValues"]["customfield_10483"] == [{"value": "DC NOC"}]
+    assert set(first["editable_fields"]) == {"subject", "description", "project_key", "issue_type", "priority"}
+    assert first["effective_operation"]["payload"]["fields"]["project"] == {"key": "OPS"}
     with pytest.raises(GuardError):
-        await lifecycle.service.edit(lifecycle.actor, approval.id, 1, first["arguments_hash"], {"department": "DNOC"})
-    revised = await lifecycle.service.edit(lifecycle.actor, approval.id, 1, first["arguments_hash"], {"core": "3"})
-    assert revised["arguments"]["core"] == "3"
-    assert revised["effective_operation"]["payload"]["requestFieldValues"]["customfield_10483"] == [{"value": "Stamford Ops"}]
+        await lifecycle.service.edit(lifecycle.actor, approval.id, 1, first["arguments_hash"], {"assignee": "someone"})
+    revised = await lifecycle.service.edit(lifecycle.actor, approval.id, 1, first["arguments_hash"],
+        {"project_key": "NET", "priority": "High"})
+    assert revised["arguments"]["project_key"] == "NET"
+    assert revised["effective_operation"]["payload"]["fields"]["project"] == {"key": "NET"}
+    assert revised["effective_operation"]["payload"]["fields"]["priority"] == {"name": "High"}
 
 
 @pytest.mark.parametrize("name", ["create_jira_ticket", "update_jira_ticket", "close_ticket"])

@@ -15,7 +15,7 @@ from lisa.guardrails.hitl.context import ExecutionContext, Principal, execution_
 from lisa.guardrails.hitl.policy import GuardError, authorize
 
 KNOWLEDGE = {"web_search", "web_search_with_content", "search_knowledge"}
-TROUBLESHOOTING = KNOWLEDGE | {"search_jira_tickets", "onair_finder"}
+TROUBLESHOOTING = KNOWLEDGE | {"search_jira_tickets"}
 ALL_TOOLS = MCP_TOOL_ALLOWLIST | {"unregistered_tool"}
 
 
@@ -104,7 +104,7 @@ async def test_knowledge_agent_rejects_troubleshooting_tools(specialist):
     case = specialist
     if not isinstance(case.agent, KnowledgeAssistant):
         return
-    for name in ("search_jira_tickets", "onair_finder"):
+    for name in ("search_jira_tickets",):
         with pytest.raises(PermissionError):
             await case.agent._execute_mcp_tool(name, {})
     case.client.call_tool.assert_not_awaited()
@@ -133,14 +133,13 @@ async def test_handoff_takes_precedence_over_other_calls(specialist):
     case.client.call_tool.assert_not_awaited()
 
 
-async def test_troubleshooting_can_use_ticket_and_onair_tools(specialist):
+async def test_troubleshooting_can_use_ticket_tools(specialist):
     case = specialist
     if not isinstance(case.agent, TroubleshootingAgent):
         return
     with execution_scope(ExecutionContext(case.principal, uuid4(), case.service)):
-        for name in ("search_jira_tickets", "onair_finder"):
-            assert await case.agent._execute_mcp_tool(name, {}) == "ok"
-    assert [call.args[0] for call in case.client.call_tool.await_args_list] == ["search_jira_tickets", "onair_finder"]
+        assert await case.agent._execute_mcp_tool("search_jira_tickets", {}) == "ok"
+    assert [call.args[0] for call in case.client.call_tool.await_args_list] == ["search_jira_tickets"]
 
 
 async def test_general_enquiry_keeps_all_tools():

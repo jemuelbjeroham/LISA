@@ -16,15 +16,15 @@ from lisa.guardrails.hitl.policy import REGISTRY, GuardError, MemoryArguments, a
 
 MCP_TOOLS = {
     "web_search", "web_search_with_content", "search_knowledge", "health_check",
-    "onair_finder", "search_jira_tickets", "create_jira_ticket", "update_jira_ticket",
+    "search_jira_tickets", "create_jira_ticket", "update_jira_ticket",
     "close_ticket",
 }
 WRITE_TOOLS = {"create_jira_ticket", "update_jira_ticket", "close_ticket"}
 
 
-def test_registration_count_nine_mcp_plus_native_memory():
+def test_registration_count_eight_mcp_plus_native_memory():
     assert {name for name, policy in REGISTRY.items() if policy.namespace == "mcp"} == MCP_TOOLS
-    assert len(MCP_TOOLS) == 9
+    assert len(MCP_TOOLS) == 8
     assert set(REGISTRY) == MCP_TOOLS | {"save_memory"}
     assert {name for name, policy in REGISTRY.items() if policy.write} == WRITE_TOOLS
     assert REGISTRY["save_memory"].namespace == "native"

@@ -3,7 +3,7 @@ KNOWLEDGE_TOOLS = frozenset({
 })
 
 TROUBLESHOOTING_TOOLS = KNOWLEDGE_TOOLS | frozenset({
-    "search_jira_tickets", "onair_finder",
+    "search_jira_tickets",
 })
 
 RESTRICTED_AGENT_TOOLS = {
