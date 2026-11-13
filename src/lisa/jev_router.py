@@ -29,11 +29,15 @@ from typing import Any, Self
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, ConfigDict, model_validator
-from typesafe_sdk import Noul, TypeSafeClient
+from typesafe_sdk import Noul, TypeSafeClient, TypeSafeError
 
+from lisa.observability import LISAObservability
 from lisa.routing import Route, RoutingDecision
 
 logger = logging.getLogger(__name__)
+
+# Name of the Langfuse observation recorded for each Jev call.
+JEV_OBSERVATION_NAME = "jev-routing"
 
 YES_THRESHOLD = 0.7
 NO_THRESHOLD = 0.3
@@ -148,24 +152,63 @@ def decide_route(probabilities: Mapping[str, float]) -> Route | None:
 
 
 class JevRouter:
-    def __init__(self, client: TypeSafeClient, prompt: JevRoutingPrompt) -> None:
+    def __init__(
+        self,
+        client: TypeSafeClient,
+        prompt: JevRoutingPrompt,
+        observability: LISAObservability | None = None,
+    ) -> None:
         self.client = client
         self.background = dict(prompt.state)
         self.questions = prompt.to_questions()
+        self.observability = observability or LISAObservability(client=None)
 
     def classify(self, messages: Sequence[BaseMessage]) -> RoutingDecision | None:
-        """Return Jev's route, or None when Jev is unsure. Raises on API errors."""
+        """Return Jev's route, or None when Jev is unsure. Raises on API errors.
+
+        Each Jev call is recorded as a Langfuse generation (when tracing is
+        enabled) nested under the current observation, normally the
+        orchestrator's route span.
+        """
         state = build_routing_state(messages, self.background)
         if state is None:
             logger.info("Jev routing skipped: no user message in state")
             return None
 
         logger.debug("Jev routing request: state=%s", state)
-        response = self.client.system_one(state, self.questions)
-        probabilities = {
-            name: response.nouls[name].noul for name in self.questions
-        }
-        route = decide_route(probabilities)
+        with self.observability.span(
+            JEV_OBSERVATION_NAME,
+            as_type="generation",
+            input={"state": state, "questions": list(self.questions)},
+        ) as observation:
+            try:
+                response = self.client.system_one(state, self.questions)
+            except Exception as exc:
+                if observation is not None:
+                    observation.update(
+                        level="ERROR",
+                        status_message=f"{type(exc).__name__}: {exc}",
+                        metadata={"fallback_to_llm": True},
+                    )
+                raise
+
+            probabilities = {
+                name: response.nouls[name].noul for name in self.questions
+            }
+            route = decide_route(probabilities)
+            if observation is not None:
+                observation.update(
+                    model=response.model,
+                    output={
+                        "probabilities": probabilities,
+                        "route": route.value if route else "unsettled",
+                    },
+                    usage_details=_usage_details(response),
+                    metadata={
+                        "request_id": _request_id(response),
+                        "fallback_to_llm": route is None,
+                    },
+                )
 
         logger.info(
             "Jev routing answers: model=%s, probabilities=%s, route=%s",
@@ -174,6 +217,24 @@ class JevRouter:
             route.value if route else "unsettled",
         )
         return RoutingDecision(route=route) if route else None
+
+
+def _request_id(response: Any) -> str | None:
+    """TypeSafe's request ID for support lookups; raises in the SDK when absent."""
+    try:
+        return response.request_id
+    except (AttributeError, TypeSafeError):
+        return None
+
+
+def _usage_details(response: Any) -> dict[str, int] | None:
+    usage = getattr(response, "usage", None)
+    details = {
+        "input": getattr(usage, "input_tokens", None),
+        "output": getattr(usage, "output_tokens", None),
+    }
+    details = {key: value for key, value in details.items() if isinstance(value, int)}
+    return details or None
 
 
 def _conversation_turn(message: BaseMessage) -> dict[str, str] | None:

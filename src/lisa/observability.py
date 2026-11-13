@@ -83,15 +83,24 @@ class LISAObservability:
         name: str,
         *,
         input: dict[str, Any] | None = None,
+        as_type: str = "span",
+        **attributes: Any,
     ) -> Generator[Any, None, None]:  # noqa: UP043
+        """Open a Langfuse observation nested under the current one.
+
+        `as_type="generation"` records a model call; extra `attributes`
+        (for example `model` or `metadata`) are passed to Langfuse as-is.
+        Yields None when tracing is disabled.
+        """
         if self.client is None:
             yield None
             return
 
         with self.client.start_as_current_observation(
-            as_type="span",
+            as_type=as_type,
             name=name,
             input=input,
+            **attributes,
         ) as observation:
             yield observation
 

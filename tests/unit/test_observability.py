@@ -90,3 +90,18 @@ async def test_streaming_continuation_inherits_callbacks():
     assert handler.starts == 1
     await RunnableLambda(lambda value: value).ainvoke(1)
     assert handler.starts == 1
+
+
+def test_span_records_generation_with_extra_attributes():
+    client = MagicMock()
+    observation = client.start_as_current_observation.return_value.__enter__.return_value
+    with LISAObservability(client).span("model-call", as_type="generation", input={"q": 1}, model="m") as current:
+        assert current is observation
+    client.start_as_current_observation.assert_called_once_with(
+        as_type="generation", name="model-call", input={"q": 1}, model="m"
+    )
+
+
+def test_span_yields_none_when_tracing_disabled():
+    with LISAObservability(None).span("model-call", as_type="generation") as current:
+        assert current is None

@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from lisa import orchestrator as orchestrator_module
 from lisa.jev_router import (
+    JEV_OBSERVATION_NAME,
     MAX_EARLIER_MESSAGES,
     NEEDS_INTERNAL_DOCS,
     WANTS_PROBLEM_SOLVED,
@@ -16,6 +17,7 @@ from lisa.jev_router import (
     decide_route,
     parse_jev_routing_prompt,
 )
+from lisa.observability import LISAObservability
 from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 from lisa.routing import Route, RoutingDecision
@@ -163,3 +165,69 @@ def test_orchestrator_falls_back_to_llm_when_jev_errors(monkeypatch):
         "active_route": Route.TROUBLESHOOTING_AGENT,
         "agent_handoff": None,
     }
+
+
+def traced_router(client):
+    langfuse = MagicMock()
+    observation = langfuse.start_as_current_observation.return_value.__enter__.return_value
+    return JevRouter(client, PROMPT, observability=LISAObservability(langfuse)), langfuse, observation
+
+
+def test_jev_call_is_traced_as_generation_with_scores_and_route():
+    client = jev_client(0.02, 0.96, 0.1)
+    response = client.system_one.return_value
+    response.request_id = "req_123"
+    response.usage = SimpleNamespace(input_tokens=210, output_tokens=None)
+    router, langfuse, observation = traced_router(client)
+
+    decision = router.classify([HumanMessage(content="CH398 is black")])
+
+    assert decision.route is Route.TROUBLESHOOTING_AGENT
+    start = langfuse.start_as_current_observation.call_args.kwargs
+    assert start["name"] == JEV_OBSERVATION_NAME
+    assert start["as_type"] == "generation"
+    assert start["input"]["state"]["latest_user_message"] == "CH398 is black"
+    assert set(start["input"]["questions"]) == {WANTS_TICKET, WANTS_PROBLEM_SOLVED, NEEDS_INTERNAL_DOCS}
+    observation.update.assert_called_once_with(
+        model="jev-1.14.0",
+        output={"probabilities": answers(0.02, 0.96, 0.1), "route": "troubleshooting_agent"},
+        usage_details={"input": 210},
+        metadata={"request_id": "req_123", "fallback_to_llm": False},
+    )
+
+
+def test_unsettled_jev_call_is_traced_as_llm_fallback():
+    router, _, observation = traced_router(jev_client(0.02, 0.03, 0.5))
+
+    assert router.classify([HumanMessage(content="Where is the guide?")]) is None
+
+    update = observation.update.call_args.kwargs
+    assert update["output"]["route"] == "unsettled"
+    assert update["metadata"] == {"request_id": None, "fallback_to_llm": True}
+    assert update["usage_details"] is None
+
+
+def test_failed_jev_call_is_traced_as_error_and_reraised():
+    client = MagicMock()
+    client.system_one.side_effect = RuntimeError("TypeSafe unavailable")
+    router, _, observation = traced_router(client)
+
+    with pytest.raises(RuntimeError):
+        router.classify([HumanMessage(content="Feed is down")])
+
+    observation.update.assert_called_once_with(
+        level="ERROR",
+        status_message="RuntimeError: TypeSafe unavailable",
+        metadata={"fallback_to_llm": True},
+    )
+
+
+def test_jev_router_without_observability_does_not_trace():
+    client = jev_client(0.02, 0.03, 0.95)
+    assert JevRouter(client, PROMPT).classify([HumanMessage(content="Docs?")]).route is Route.KNOWLEDGE_ASSISTANT
+
+
+def test_skipped_jev_call_records_no_observation():
+    router, langfuse, _ = traced_router(MagicMock())
+    assert router.classify([SystemMessage(content="system only")]) is None
+    langfuse.start_as_current_observation.assert_not_called()

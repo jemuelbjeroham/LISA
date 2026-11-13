@@ -610,7 +610,11 @@ class LISA:
             jev_routing_prompt = parse_jev_routing_prompt(
                 load_prompt("orchestrator/jev_routing_v1.json")
             )
-            jev_router = JevRouter(self.jev_model, jev_routing_prompt)
+            jev_router = JevRouter(
+                self.jev_model,
+                jev_routing_prompt,
+                observability=self.observability,
+            )
         self.orchestrator = Orchestrator(
             model=self.router_model,
             routing_prompt=routing_prompt,
