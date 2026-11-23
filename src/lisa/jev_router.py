@@ -12,14 +12,19 @@ Decision table (Y = probability above YES_THRESHOLD, N = below
 NO_THRESHOLD, ? = in between, - = not read). Rows are checked in order,
 mirroring the precedence rules of the LLM routing prompt:
 
-    ticket   problem  internal_docs | outcome
-    Y        -        -             | general_enquiry
-    ?        -        -             | unsettled -> LLM fallback
-    N        Y        -             | troubleshooting_agent
-    N        ?        -             | unsettled -> LLM fallback
-    N        N        Y             | knowledge_assistant
-    N        N        ?             | unsettled -> LLM fallback
-    N        N        N             | general_enquiry
+    ticket  tv  problem  internal_docs | outcome
+    Y       -   -        -             | general_enquiry
+    ?       -   -        -             | unsettled -> LLM fallback
+    N       Y   -        -             | tv_controller
+    N       ?   -        -             | unsettled -> LLM fallback
+    N       N   Y        -             | troubleshooting_agent
+    N       N   ?        -             | unsettled -> LLM fallback
+    N       N   N        Y             | knowledge_assistant
+    N       N   N        ?             | unsettled -> LLM fallback
+    N       N   N        N             | general_enquiry
+
+A ticket about the TV is still a ticket; any other request to check, operate
+or fix the LG TV goes to the TV controller, ahead of general troubleshooting.
 """
 
 import json
@@ -46,12 +51,14 @@ MAX_EARLIER_MESSAGES = 6
 MAX_MESSAGE_CHARS = 4000
 
 WANTS_TICKET = "wants_ticket"
+WANTS_TV_CONTROL = "wants_tv_control"
 WANTS_PROBLEM_SOLVED = "wants_problem_solved"
 NEEDS_INTERNAL_DOCS = "needs_internal_docs"
 
 # Read in this order by the decision table; a clear yes wins.
 ROUTE_RULES: tuple[tuple[str, Route], ...] = (
     (WANTS_TICKET, Route.GENERAL_ENQUIRY),
+    (WANTS_TV_CONTROL, Route.TV_CONTROLLER),
     (WANTS_PROBLEM_SOLVED, Route.TROUBLESHOOTING_AGENT),
     (NEEDS_INTERNAL_DOCS, Route.KNOWLEDGE_ASSISTANT),
 )

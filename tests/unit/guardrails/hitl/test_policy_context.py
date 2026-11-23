@@ -14,17 +14,26 @@ from lisa.guardrails.hitl.context import (
 )
 from lisa.guardrails.hitl.policy import REGISTRY, GuardError, MemoryArguments, authorize
 
-MCP_TOOLS = {
+LISA_MCP_TOOLS = {
     "web_search", "web_search_with_content", "search_knowledge", "health_check",
     "search_jira_tickets", "create_jira_ticket", "update_jira_ticket",
     "close_ticket",
 }
+TV_TOOLS = {
+    "tv_health_check", "tv_get_status", "tv_get_info", "tv_get_picture_settings",
+    "tv_list_apps", "tv_list_inputs", "tv_power_off", "tv_power_on", "tv_set_screen",
+    "tv_set_volume", "tv_adjust_volume", "tv_set_mute", "tv_set_sound_output",
+    "tv_media_control", "tv_launch_app", "tv_open_url", "tv_switch_input",
+    "tv_show_notification", "tv_show_alert", "tv_close_alert", "tv_youtube_seek",
+}
+MCP_TOOLS = LISA_MCP_TOOLS | TV_TOOLS
 WRITE_TOOLS = {"create_jira_ticket", "update_jira_ticket", "close_ticket"}
 
 
-def test_registration_count_eight_mcp_plus_native_memory():
+def test_registration_lisa_and_tv_mcp_tools_plus_native_memory():
     assert {name for name, policy in REGISTRY.items() if policy.namespace == "mcp"} == MCP_TOOLS
-    assert len(MCP_TOOLS) == 8
+    assert len(LISA_MCP_TOOLS) == 8
+    assert len(TV_TOOLS) == 21
     assert set(REGISTRY) == MCP_TOOLS | {"save_memory"}
     assert {name for name, policy in REGISTRY.items() if policy.write} == WRITE_TOOLS
     assert REGISTRY["save_memory"].namespace == "native"
@@ -112,3 +121,10 @@ def test_native_sink_rejects_missing_user_identity():
     assert native_write.get() is None
     with pytest.raises(GuardError, match="approval_required"):
         require_native_write(None)
+
+
+def test_tv_tools_are_admin_only_and_run_without_approval():
+    for name in TV_TOOLS:
+        policy = REGISTRY[name]
+        assert not policy.write and not policy.member, name
+        assert policy.operation.startswith(("tv.read.", "tv.control.")), name

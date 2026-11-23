@@ -14,6 +14,7 @@ from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.knowledge_assistant import KnowledgeAssistant
 from lisa.agents.mem_agent import MemoryAgent
 from lisa.agents.troubleshooting_agent import TroubleshootingAgent
+from lisa.agents.tv_controller import TVController
 from lisa.config import Settings
 from lisa.context import LISAContext
 from lisa.conversation.store import ConversationStore
@@ -26,7 +27,7 @@ from lisa.infrastructure.postgres.memory_dependencies import (
     memory_dependencies,
 )
 from lisa.jev_router import JevRouter, parse_jev_routing_prompt
-from lisa.mcp.client import MCPClient
+from lisa.mcp.client import MCPClient, MultiMCPClient
 from lisa.memory.workflow import MemoryWorkflow
 from lisa.message_context import user_message
 from lisa.model import (
@@ -67,7 +68,7 @@ class LISA:
         self.technical_model = technical_model
         self.retrieval_planner = retrieval_planner
         self.graph = None
-        self.mcp_client: MCPClient | None = None
+        self.mcp_client: MCPClient | MultiMCPClient | None = None
         self.database: Database | None = None
         self.hitl = None
         self._hitl_recovery_task = None
@@ -78,6 +79,7 @@ class LISA:
         self.orchestrator = None
         self.knowledge_assistant_agent = None
         self.troubleshooting_agent = None
+        self.tv_controller_agent = None
         self.butler = None
         self.specialist = None
         self.general_enquiry_agent = None
@@ -519,6 +521,21 @@ class LISA:
         #     state,
         # )
 
+    async def _connect_optional_mcp_server(self, name: str, client: MCPClient) -> MCPClient | None:
+        """Start an optional MCP server; LISA keeps running without it if it fails."""
+        try:
+            connected = await client.__aenter__()
+        except Exception:
+            logger.exception("Optional MCP server failed to start; continuing without it: %s", name)
+            try:
+                await client.__aexit__(None, None, None)
+            except Exception:
+                logger.debug("Cleanup after failed MCP start raised", exc_info=True)
+            return None
+        self.exit_stack.push_async_exit(client)
+        logger.info("Connected optional MCP server: %s", name)
+        return connected
+
     async def __aenter__(self) -> Self:
         logger.info("Initializing LISA (Level 1 Intelligent System and Assistant)")
         settings = Settings()
@@ -599,16 +616,31 @@ class LISA:
                 }
             )
         )
-        routing_prompt = load_prompt("orchestrator/routing_level1_engineering_v2.txt")
+        if getattr(settings, "lg_mcp_server_enabled", False):
+            lg_client = await self._connect_optional_mcp_server(
+                "lg-mcp-server",
+                MCPClient(
+                    command=settings.lg_mcp_server_command,
+                    args=settings.lg_mcp_server_args,
+                    cwd=settings.lg_mcp_server_cwd,
+                    env=dict(os.environ),
+                ),
+            )
+            if lg_client is not None:
+                self.mcp_client = MultiMCPClient(
+                    {"lisa-mcp-server": self.mcp_client, "lg-mcp-server": lg_client}
+                )
+        routing_prompt = load_prompt("orchestrator/routing_level1_engineering_v3.txt")
         identity = load_prompt("Identity.txt").rstrip()
         general_enquiry_prompt = identity + "\n\n" + load_prompt("general_enquiry/general_enquiry_v2.txt")
         knowledge_assistant_prompt = identity + "\n\n" + load_prompt("knowledge_assistant/knowledge_assistant_v1.txt")
         troubleshooting_prompt = identity + "\n\n" + load_prompt("troubleshooting_agent/troubleshooting_agent_v1.txt")
+        tv_controller_prompt = identity + "\n\n" + load_prompt("tv_controller/tv_controller_v1.txt")
         memory_agent_prompt = load_prompt("memory/memory_agent_v2.txt")
         jev_router = None
         if self.jev_model is not None:
             jev_routing_prompt = parse_jev_routing_prompt(
-                load_prompt("orchestrator/jev_routing_v1.json")
+                load_prompt("orchestrator/jev_routing_v2.json")
             )
             jev_router = JevRouter(
                 self.jev_model,
@@ -640,6 +672,14 @@ class LISA:
             input_moderator=self.input_moderator,
             mcp_client=self.mcp_client,
         )
+        self.tv_controller_agent = TVController(
+            model=self.model,
+            fallback_model=self.fallback_model,
+            thinking_model=self.thinking_model,
+            system_prompt=tv_controller_prompt,
+            input_moderator=self.input_moderator,
+            mcp_client=self.mcp_client,
+        )
         self.general_enquiry_agent = GeneralEnquiry(
             model=self.model,
             fallback_model=self.fallback_model,
@@ -651,12 +691,14 @@ class LISA:
         await self.knowledge_assistant_agent.initialize_tools()
         await self.troubleshooting_agent.initialize_tools()
         await self.general_enquiry_agent.initialize_tools()
+        await self.tv_controller_agent.initialize_tools()
         for agent, method_name in (
             (self.orchestrator, "route"),
             (self.memory_agent, "analyze"),
             (self.knowledge_assistant_agent, "run"),
             (self.troubleshooting_agent, "run"),
             (self.general_enquiry_agent, "run"),
+            (self.tv_controller_agent, "run"),
             (self.hitl, "continuation_runner"),
         ):
             self.observability.instrument(agent, method_name, self.langfuse_handler)
@@ -667,6 +709,7 @@ class LISA:
             troubleshooting_agent=self.troubleshooting_agent,
             general_enquiry_agent=self.general_enquiry_agent,
             routing_policy=self.routing_policy,
+            tv_controller_agent=self.tv_controller_agent,
         )
         logger.info(
             "LISA has been initialized: model=%s, thinking_model=%s, router_model=%s, "

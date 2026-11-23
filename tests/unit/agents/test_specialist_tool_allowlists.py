@@ -12,10 +12,15 @@ from lisa.agents.knowledge_assistant import KnowledgeAssistant
 from lisa.agents.troubleshooting_agent import TroubleshootingAgent
 from lisa.context import LISAContext
 from lisa.guardrails.hitl.context import ExecutionContext, Principal, execution_scope
-from lisa.guardrails.hitl.policy import GuardError, authorize
+from lisa.guardrails.hitl.policy import (
+    TV_CONTROL_TOOLS,
+    TV_READ_TOOLS,
+    GuardError,
+    authorize,
+)
 
-KNOWLEDGE = {"web_search", "web_search_with_content", "search_knowledge"}
-TROUBLESHOOTING = KNOWLEDGE | {"search_jira_tickets"}
+KNOWLEDGE = {"web_search", "web_search_with_content", "search_knowledge"} | TV_READ_TOOLS
+TROUBLESHOOTING = KNOWLEDGE | TV_CONTROL_TOOLS | {"search_jira_tickets"}
 ALL_TOOLS = MCP_TOOL_ALLOWLIST | {"unregistered_tool"}
 
 

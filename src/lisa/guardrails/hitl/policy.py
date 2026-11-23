@@ -25,6 +25,22 @@ class MemoryArguments(BaseModel):
     scope: MemoryScope
 
 
+# LG TV tools served by lg-mcp-server. They act on a device on the local
+# network rather than on business records, so they run directly for admins
+# instead of going through the approval workflow.
+TV_READ_TOOLS = frozenset({
+    "tv_health_check", "tv_get_status", "tv_get_info", "tv_get_picture_settings",
+    "tv_list_apps", "tv_list_inputs",
+})
+TV_CONTROL_TOOLS = frozenset({
+    "tv_power_off", "tv_power_on", "tv_set_screen", "tv_set_volume", "tv_adjust_volume",
+    "tv_set_mute", "tv_set_sound_output", "tv_media_control", "tv_launch_app",
+    "tv_open_url", "tv_switch_input", "tv_show_notification", "tv_show_alert",
+    "tv_close_alert",
+    "tv_youtube_seek",
+})
+
+
 @dataclass(frozen=True)
 class ToolPolicy:
     name: str
@@ -48,6 +64,10 @@ REGISTRY = {
         ToolPolicy("update_jira_ticket", "mcp", "jira.comment", write=True, editable=("comment",)),
         ToolPolicy("close_ticket", "mcp", "jira.close", write=True),
         ToolPolicy("save_memory", "native", "memory.create", member=True),
+        *(ToolPolicy(name, "mcp", f"tv.read.{name.removeprefix('tv_')}")
+          for name in sorted(TV_READ_TOOLS)),
+        *(ToolPolicy(name, "mcp", f"tv.control.{name.removeprefix('tv_')}")
+          for name in sorted(TV_CONTROL_TOOLS)),
     )
 }
 

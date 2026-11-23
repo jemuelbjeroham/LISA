@@ -8,12 +8,13 @@ from lisa.prompts.loader import load_prompt
 PROMPT_DIR = Path(load_prompt.__code__.co_filename).parent
 
 APPLICATION_PROMPTS = {
-    "orchestrator/routing_level1_engineering_v2.txt",
-    "orchestrator/jev_routing_v1.json",
+    "orchestrator/routing_level1_engineering_v3.txt",
+    "orchestrator/jev_routing_v2.json",
     "Identity.txt",
     "general_enquiry/general_enquiry_v2.txt",
     "knowledge_assistant/knowledge_assistant_v1.txt",
     "troubleshooting_agent/troubleshooting_agent_v1.txt",
+    "tv_controller/tv_controller_v1.txt",
     "memory/memory_agent_v2.txt",
 }
 
@@ -30,7 +31,7 @@ def test_identity_names_lisa_and_level1_engineering_team():
     assert "Distribution Engineering" not in identity
 
 
-def test_application_loads_the_three_agent_prompts():
+def test_application_loads_the_agent_prompts():
     from lisa import application
 
     tree = ast.parse(Path(application.__file__).read_text(encoding="utf-8"))
@@ -42,13 +43,39 @@ def test_application_loads_the_three_agent_prompts():
         assert load_prompt(path).strip()
 
 
-@pytest.mark.parametrize("path", ["orchestrator/routing_level1_engineering_v2.txt", "orchestrator/routing_v2.txt"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "orchestrator/routing_level1_engineering_v2.txt",
+        "orchestrator/routing_level1_engineering_v3.txt",
+        "orchestrator/routing_v2.txt",
+    ],
+)
 def test_routing_prompt_describes_the_three_routes(path):
     routing = load_prompt(path)
     assert "LISA" in routing
     for route in ("general_enquiry", "knowledge_assistant", "troubleshooting_agent"):
         assert f"`{route}`" in routing
     assert "technical_clarification" not in routing
+
+
+def test_routing_prompt_v3_adds_the_tv_controller_route():
+    routing = load_prompt("orchestrator/routing_level1_engineering_v3.txt")
+    assert "### D. `tv_controller`" in routing
+    contract = routing.split("## 6. Output Contract", 1)[1]
+    assert "- `tv_controller`" in contract
+
+
+def test_tv_controller_prompt_covers_controls_multistep_and_handoff():
+    prompt = load_prompt("tv_controller/tv_controller_v1.txt")
+    for tool in ("tv_get_status", "tv_power_on", "tv_launch_app", "tv_set_volume", "tv_switch_input"):
+        assert f"`{tool}`" in prompt
+    assert "## Multi-Step Instructions" in prompt
+    assert "`handoff`" in prompt
+    assert "Play as guest" in prompt
+    assert "`playback`" in prompt and "media.playing" in prompt
+    assert "## Seeking in a YouTube Video" in prompt and "`tv_youtube_seek`" in prompt
+    assert "`offset_seconds`" in prompt and "`position_seconds`" in prompt
 
 
 def test_memory_agent_purpose_is_unchanged():

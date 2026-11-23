@@ -22,6 +22,7 @@ async def test_graph_routes_to_selected_agent(route, active):
         troubleshooting_agent=agents[Route.TROUBLESHOOTING_AGENT.value],
         general_enquiry_agent=agents[Route.GENERAL_ENQUIRY.value],
         routing_policy=RoutingPolicy(),
+        tv_controller_agent=agents[Route.TV_CONTROLLER.value],
     )
 
     state = {
@@ -65,3 +66,59 @@ async def test_graph_routes_handoff_between_new_agents():
     knowledge.run.assert_called_once()
     troubleshooting.run.assert_called_once()
     general.run.assert_not_called()
+
+@pytest.mark.parametrize("active", [False, True])
+async def test_tv_route_falls_back_to_general_enquiry_without_tv_controller(active):
+    orchestrator = MagicMock()
+    orchestrator.route.return_value = {"route": Route.TV_CONTROLLER, "active_route": Route.TV_CONTROLLER}
+    agents = {name: MagicMock() for name in ("knowledge", "troubleshooting", "general")}
+    for name, agent in agents.items():
+        agent.run.return_value = {"messages": [AIMessage(content=name)]}
+
+    graph = build_graph(
+        orchestrator,
+        agents["knowledge"],
+        agents["troubleshooting"],
+        agents["general"],
+        RoutingPolicy(),
+    )
+    result = await graph.ainvoke({
+        "messages": [HumanMessage(content="Turn on the TV")],
+        "route": None,
+        "active_route": Route.TV_CONTROLLER if active else None,
+        "agent_handoff": None,
+    })
+
+    assert result["messages"][-1].content == "general"
+    assert "tv_controller" not in graph.nodes
+
+
+async def test_tv_controller_hands_off_to_another_agent():
+    orchestrator = MagicMock()
+    # The active TV route skips the orchestrator; it is asked only after the handoff.
+    orchestrator.route.side_effect = [
+        {"route": Route.GENERAL_ENQUIRY, "active_route": Route.GENERAL_ENQUIRY, "agent_handoff": None},
+    ]
+    agents = {name.value: MagicMock() for name in Route}
+    for name, agent in agents.items():
+        agent.run.return_value = {"messages": [AIMessage(content=name)]}
+    agents[Route.TV_CONTROLLER.value].run.return_value = {"agent_handoff": {"reason": "web search"}}
+
+    graph = build_graph(
+        orchestrator=orchestrator,
+        knowledge_assistant_agent=agents[Route.KNOWLEDGE_ASSISTANT.value],
+        troubleshooting_agent=agents[Route.TROUBLESHOOTING_AGENT.value],
+        general_enquiry_agent=agents[Route.GENERAL_ENQUIRY.value],
+        routing_policy=RoutingPolicy(),
+        tv_controller_agent=agents[Route.TV_CONTROLLER.value],
+    )
+    result = await graph.ainvoke({
+        "messages": [HumanMessage(content="Search the web for HDMI 2.2")],
+        "route": None,
+        "active_route": Route.TV_CONTROLLER,
+        "agent_handoff": None,
+    })
+
+    assert result["messages"][-1].content == "general_enquiry"
+    assert result["active_route"] is Route.GENERAL_ENQUIRY
+    assert result["handoff_count"] == 1

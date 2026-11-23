@@ -1,0 +1,37 @@
+{
+  "state": {
+    "assistant": "LISA, an assistant for the Level 1 Engineering team, which runs broadcast and video distribution: channels, feeds, streams and media delivery workflows.",
+    "internal_systems": "SkyPath, Amagi, TAG, MediaProxy and Techex are video distribution systems the team operates. The company's internal documentation describes the team's forms, approvals, procedures and how these systems are used.",
+    "devices": "LISA can also check and operate the team's LG TV: power, screen, volume, mute, sound output, playback, apps such as YouTube or Netflix, web pages, HDMI inputs and on-screen messages."
+  },
+  "questions": {
+    "wants_ticket": {
+      "instructions": "In `latest_user_message`, is the user asking LISA to create, submit, update or look up a support, service or incident ticket?",
+      "criteria": {
+        "true": "The user wants a ticket action, such as \"Create a ticket for channel CH398 having no video\" or \"What's the status of ticket 4521?\"",
+        "false": "The user wants something else, such as help understanding or fixing a problem, even when the problem might later need a ticket."
+      }
+    },
+    "wants_tv_control": {
+      "instructions": "In `latest_user_message`, read together with `earlier_conversation` for short follow-ups, does the user want LISA to check, operate or fix the LG TV itself?",
+      "criteria": {
+        "true": "The user wants something done to or read from the TV, such as \"Turn on the TV and open YouTube\", \"Set the volume to 20\", \"Is the TV on?\", \"Switch to HDMI 2\", \"There's no sound from the TV, fix it\" or a follow-up like \"now mute it\" after a TV request.",
+        "false": "The TV is not the subject, or it is only mentioned in passing, such as \"What is HDMI ARC?\", \"Create a ticket because the lobby TV is broken\" or \"The Amagi feed is down\"."
+      }
+    },
+    "wants_problem_solved": {
+      "instructions": "In `latest_user_message`, does the user want help finding the cause of, or fixing, a specific problem with a system, channel, feed, stream or workflow?",
+      "criteria": {
+        "true": "The user describes something that is failing or behaving abnormally and wants it explained, diagnosed or resolved, such as \"The Amagi feed is down, help me find the cause\" or \"The stream is buffering. What should I check first?\"",
+        "false": "The user asks how something works or which procedure to follow, with no specific failure to investigate, such as \"How does SkyPath failover work?\""
+      }
+    },
+    "needs_internal_docs": {
+      "instructions": "Does answering `latest_user_message` need the company's internal documentation, such as its forms, procedures, policies or how the team uses its internal systems?",
+      "criteria": {
+        "true": "The answer is specific to the company, such as \"How do I submit the media maintenance form?\" or \"What is the internal process for requesting a new channel?\"",
+        "false": "Public knowledge or casual conversation would answer it, such as \"What is HLS?\", \"Hi, how are you?\" or a request to search the web."
+      }
+    }
+  }
+}

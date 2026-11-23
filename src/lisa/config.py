@@ -50,6 +50,13 @@ class Settings(BaseSettings):
         "lisa_mcp_server.server",
     ]
     mcp_server_cwd: Path = Path("../lisa-mcp-server")
+
+    # Optional LG TV MCP server (lg-mcp-server). The TV connection itself is
+    # configured with LG_TV_* variables, which the server reads directly.
+    lg_mcp_server_enabled: bool = False
+    lg_mcp_server_command: str = "uv"
+    lg_mcp_server_args: list[str] = ["run", "lg-mcp-server"]
+    lg_mcp_server_cwd: Path = Path("../lg-mcp-server")
     tavily_api_key: str = Field(validation_alias="TAVILY_API_KEY")
 
     #Database

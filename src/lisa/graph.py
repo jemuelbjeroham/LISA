@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from lisa.agents.general_enquiry import GeneralEnquiry
 from lisa.agents.knowledge_assistant import KnowledgeAssistant
 from lisa.agents.troubleshooting_agent import TroubleshootingAgent
+from lisa.agents.tv_controller import TVController
 from lisa.context import LISAContext
 from lisa.orchestrator import Orchestrator
 from lisa.routing import Route, RoutingAction, RoutingPolicy
@@ -85,13 +86,26 @@ def build_graph(
     troubleshooting_agent: TroubleshootingAgent,
     general_enquiry_agent: GeneralEnquiry,
     routing_policy: RoutingPolicy,
+    tv_controller_agent: TVController | None = None,
 ):
+    """Build the LISA graph.
+
+    `tv_controller_agent` is optional so callers without one keep working;
+    without it, TV routes go to `general_enquiry`, which also has the TV tools.
+    """
     builder = StateGraph(LISAState, context_schema=LISAContext)
+    tv_node = (
+        Route.TV_CONTROLLER.value
+        if tv_controller_agent is not None
+        else Route.GENERAL_ENQUIRY.value
+    )
 
     builder.add_node("orchestrator", orchestrator.route)
     builder.add_node("knowledge_assistant", knowledge_assistant_agent.run)
     builder.add_node("troubleshooting_agent", troubleshooting_agent.run)
     builder.add_node("general_enquiry", general_enquiry_agent.run)
+    if tv_controller_agent is not None:
+        builder.add_node("tv_controller", tv_controller_agent.run)
     builder.add_node("record_handoff", record_handoff)
 
     builder.add_conditional_edges(
@@ -102,6 +116,7 @@ def build_graph(
             Route.KNOWLEDGE_ASSISTANT.value: "knowledge_assistant",
             Route.TROUBLESHOOTING_AGENT.value: "troubleshooting_agent",
             Route.GENERAL_ENQUIRY.value: "general_enquiry",
+            Route.TV_CONTROLLER.value: tv_node,
         },
     )
 
@@ -112,12 +127,15 @@ def build_graph(
             Route.KNOWLEDGE_ASSISTANT: "knowledge_assistant",
             Route.TROUBLESHOOTING_AGENT: "troubleshooting_agent",
             Route.GENERAL_ENQUIRY: "general_enquiry",
+            Route.TV_CONTROLLER: tv_node,
         },
     )
 
     builder.add_edge("knowledge_assistant", "record_handoff")
     builder.add_edge("troubleshooting_agent", "record_handoff")
     builder.add_edge("general_enquiry", "record_handoff")
+    if tv_controller_agent is not None:
+        builder.add_edge("tv_controller", "record_handoff")
 
     builder.add_conditional_edges(
         "record_handoff",

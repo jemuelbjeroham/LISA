@@ -41,6 +41,7 @@ parent directory:
 | [`lisa-api`](https://github.com/jemuelbjeroham/lisa-api) | FastAPI service exposing LISA: auth, chat streaming, conversations, approvals, admin |
 | [`lisa-ui`](https://github.com/jemuelbjeroham/lisa-ui) | Next.js web client: chat workspace, approval panels, settings, user admin |
 | [`lisa-mcp-server`](https://github.com/jemuelbjeroham/lisa-mcp-server) | MCP server providing LISA's tools (knowledge search, web search, Jira) |
+| `lg-mcp-server` | Optional MCP server for checking and controlling an LG webOS TV |
 | [`net-tools-app`](https://github.com/jemuelbjeroham/net-tools-app) | FastAPI tools backend: knowledge-base retrieval and Jira integration |
 | [`net-ops-kb-rag`](https://github.com/jemuelbjeroham/net-ops-kb-rag) | Ingestion library and CLIs that build the vector knowledge base |
 | [`lisa-cicd`](https://github.com/jemuelbjeroham/lisa-cicd) | Docker Compose deployment and reusable CI workflows |
@@ -54,7 +55,8 @@ parent directory:
                                                    │  ├─ PostgreSQL: users, sessions, memories, approvals
                                                    │  └─ Redis: conversation state
                                                    ▼  spawns over stdio
-                                              lisa-mcp-server (MCP)
+                                              lisa-mcp-server (MCP)   lg-mcp-server (MCP, optional)
+                                                   │                       └─ LG webOS TV (SSAP, Wake-on-LAN)
                                                    │
                          ┌─────────────────────────┴───────────────┐
                          ▼                                         ▼
@@ -69,7 +71,7 @@ parent directory:
 
 1. **Input moderation.** The user message is screened with OpenAI's moderation
    model before any agent runs.
-2. **Routing.** The `Orchestrator` picks one of three routes. It asks the
+2. **Routing.** The `Orchestrator` picks one of four routes. It asks the
    [TypeSafe](https://typesafe.ai) **Jev** decision model first (when
    `TYPESAFE_API_KEY` is set) and falls back to an LLM router when Jev is
    unavailable or unsure. Follow-up turns can continue on the active route
@@ -80,8 +82,20 @@ parent directory:
    | Route | Purpose | Tools |
    | --- | --- | --- |
    | `general_enquiry` | General questions, explanations, everyday help | Every registered MCP tool, plus `save_memory` and `handoff` (still subject to the HITL policy) |
-   | `knowledge_assistant` | Answers grounded in internal documentation | `search_knowledge`, `web_search`, `web_search_with_content`, `handoff` |
-   | `troubleshooting_agent` | Diagnosing and resolving operational issues | Knowledge tools plus `search_jira_tickets` |
+   | `knowledge_assistant` | Answers grounded in internal documentation | `search_knowledge`, `web_search`, `web_search_with_content`, `handoff`, read-only TV tools |
+   | `troubleshooting_agent` | Diagnosing and resolving operational issues | Knowledge tools plus `search_jira_tickets` and the TV control tools |
+   | `tv_controller` | Checking, operating and fixing the LG TV, including multi-step requests and playing songs or videos by name | The `tv_*` tools, `handoff`, and `web_search` (only to find a YouTube link to play) |
+
+   Jev routes a request to `tv_controller` when the user wants the TV itself
+   checked, operated or fixed; a ticket about the TV still goes to
+   `general_enquiry`. The TV controller runs dependent steps one at a time,
+   stops after a failed step, confirms the final state with `tv_get_status`,
+   and allows up to 10 tool rounds per turn (the other agents allow 5). If
+   `lg-mcp-server` is not connected, it says that TV control is unavailable.
+
+   When `lg-mcp-server` is enabled, its tools are listed alongside
+   `lisa-mcp-server`'s through `MultiMCPClient`, which sends each call to the
+   server that registered the tool and rejects duplicate tool names.
 
 4. **Handoffs.** An agent that decides the request belongs elsewhere calls
    `handoff`; the graph returns to the orchestrator. Handoffs are capped at three
@@ -126,7 +140,7 @@ src/lisa/
 ├── model.py                # Model factory (OpenAI / NVIDIA)
 ├── model_resilience.py     # Primary → fallback model handling
 ├── agents/                 # general_enquiry, knowledge_assistant, troubleshooting_agent,
-│                           # memory agent, tool allowlists
+│                           # tv_controller, memory agent, tool allowlists
 ├── guardrails/
 │   ├── input_moderation.py # OpenAI moderation gate
 │   └── hitl/               # Approval policy, service, Jira adapter, models, continuation
@@ -212,6 +226,14 @@ use the `LISA_` prefix (for example `model_name` → `LISA_MODEL_NAME`).
 | `LISA_MCP_SERVER_COMMAND` | `uv` | Command that starts `lisa-mcp-server` |
 | `LISA_MCP_SERVER_ARGS` | `["run","python","-m","lisa_mcp_server.server"]` | JSON list of arguments |
 | `LISA_MCP_SERVER_CWD` | `../lisa-mcp-server` | Working directory for the MCP server |
+| `LISA_LG_MCP_SERVER_ENABLED` | `false` | Also start `lg-mcp-server` and give agents the TV tools |
+| `LISA_LG_MCP_SERVER_COMMAND` | `uv` | Command that starts `lg-mcp-server` |
+| `LISA_LG_MCP_SERVER_ARGS` | `["run","lg-mcp-server"]` | JSON list of arguments |
+| `LISA_LG_MCP_SERVER_CWD` | `../lg-mcp-server` | Working directory for `lg-mcp-server` |
+
+The TV connection (`LG_TV_HOST`, MAC addresses, pairing key) is configured in
+`lg-mcp-server`'s own `.env`. If `lg-mcp-server` fails to start, LISA logs the
+error and continues with `lisa-mcp-server` only.
 
 ### Jira approvals (optional)
 
@@ -259,6 +281,11 @@ which fields an approver may edit.
 | `update_jira_ticket` | Yes | Admins | `comment` |
 | `close_ticket` | Yes | Admins | — |
 | `save_memory` (native) | Yes | Members and admins | — |
+| `tv_*` read tools (status, info, picture settings, apps, inputs, health) | No | Admins | — |
+| `tv_*` control tools (power, screen, volume, mute, sound output, playback, apps, URL, input, notifications) | No | Admins | — |
+
+TV tools act on a device on the local network rather than on business
+records, so they run directly for admins instead of going through approval.
 
 The lifecycle for a write:
 
@@ -284,11 +311,12 @@ are loaded with `lisa.prompts.loader.load_prompt`. The active set is:
 | Prompt | Used by |
 | --- | --- |
 | `Identity.txt` | Shared identity for every agent |
-| `orchestrator/routing_level1_engineering_v2.txt` | LLM router |
-| `orchestrator/jev_routing_v1.json` | Jev routing questions and background |
+| `orchestrator/routing_level1_engineering_v3.txt` | LLM router |
+| `orchestrator/jev_routing_v2.json` | Jev routing questions and background |
 | `general_enquiry/general_enquiry_v2.txt` | General enquiry agent |
 | `knowledge_assistant/knowledge_assistant_v1.txt` | Knowledge assistant |
 | `troubleshooting_agent/troubleshooting_agent_v1.txt` | Troubleshooting agent |
+| `tv_controller/tv_controller_v1.txt` | TV controller |
 | `memory/memory_agent_v2.txt` | Memory agent |
 
 When changing behaviour, add a new versioned file rather than editing an old one

@@ -57,6 +57,7 @@ def make_app(monkeypatch, *routes):
         troubleshooting_agent=agents[Route.TROUBLESHOOTING_AGENT],
         general_enquiry_agent=agents[Route.GENERAL_ENQUIRY],
         routing_policy=RoutingPolicy(),
+        tv_controller_agent=agents[Route.TV_CONTROLLER],
     )
     session = MagicMock()
     session.__aenter__ = AsyncMock(return_value=object())

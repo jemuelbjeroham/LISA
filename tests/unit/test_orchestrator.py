@@ -57,5 +57,7 @@ def test_orchestrator_recovers_after_transient_failure(monkeypatch):
     assert orchestrator.route({"messages": [HumanMessage(content="Docs?")]})["route"] is Route.KNOWLEDGE_ASSISTANT
 
 
-def test_route_enum_exposes_exactly_the_three_main_agents():
-    assert {route.value for route in Route} == {"general_enquiry", "knowledge_assistant", "troubleshooting_agent"}
+def test_route_enum_exposes_exactly_the_main_agents():
+    assert {route.value for route in Route} == {
+        "general_enquiry", "knowledge_assistant", "troubleshooting_agent", "tv_controller",
+    }

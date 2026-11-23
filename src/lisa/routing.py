@@ -7,6 +7,7 @@ class Route(StrEnum):
     GENERAL_ENQUIRY = "general_enquiry"
     KNOWLEDGE_ASSISTANT = "knowledge_assistant"
     TROUBLESHOOTING_AGENT = "troubleshooting_agent"
+    TV_CONTROLLER = "tv_controller"
 
 class RoutingAction(StrEnum):
     CONTINUE = "continue"

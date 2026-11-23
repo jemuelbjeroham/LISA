@@ -12,6 +12,7 @@ from lisa.jev_router import (
     NEEDS_INTERNAL_DOCS,
     WANTS_PROBLEM_SOLVED,
     WANTS_TICKET,
+    WANTS_TV_CONTROL,
     JevRouter,
     build_routing_state,
     decide_route,
@@ -22,20 +23,28 @@ from lisa.orchestrator import Orchestrator
 from lisa.prompts.loader import load_prompt
 from lisa.routing import Route, RoutingDecision
 
-PROMPT_PATH = "orchestrator/jev_routing_v1.json"
+PROMPT_PATH = "orchestrator/jev_routing_v2.json"
 PROMPT = parse_jev_routing_prompt(load_prompt(PROMPT_PATH))
 BACKGROUND = {"assistant": "LISA"}
 
 
-def answers(ticket: float, problem: float, docs: float) -> dict[str, float]:
-    return {WANTS_TICKET: ticket, WANTS_PROBLEM_SOLVED: problem, NEEDS_INTERNAL_DOCS: docs}
+ALL_QUESTIONS = {WANTS_TICKET, WANTS_TV_CONTROL, WANTS_PROBLEM_SOLVED, NEEDS_INTERNAL_DOCS}
 
 
-def jev_client(ticket: float, problem: float, docs: float) -> MagicMock:
+def answers(ticket: float, problem: float, docs: float, *, tv: float = 0.02) -> dict[str, float]:
+    return {
+        WANTS_TICKET: ticket,
+        WANTS_TV_CONTROL: tv,
+        WANTS_PROBLEM_SOLVED: problem,
+        NEEDS_INTERNAL_DOCS: docs,
+    }
+
+
+def jev_client(ticket: float, problem: float, docs: float, *, tv: float = 0.02) -> MagicMock:
     client = MagicMock()
     client.system_one.return_value = SimpleNamespace(
         model="jev-1.14.0",
-        nouls={name: SimpleNamespace(noul=p) for name, p in answers(ticket, problem, docs).items()},
+        nouls={name: SimpleNamespace(noul=p) for name, p in answers(ticket, problem, docs, tv=tv).items()},
     )
     return client
 
@@ -54,6 +63,12 @@ def jev_client(ticket: float, problem: float, docs: float) -> MagicMock:
         (answers(0.05, 0.1, 0.5), None),
         # A clear earlier yes is not affected by later unsettled answers.
         (answers(0.05, 0.9, 0.5), Route.TROUBLESHOOTING_AGENT),
+        # TV requests go to the TV controller, ahead of troubleshooting...
+        (answers(0.05, 0.1, 0.1, tv=0.95), Route.TV_CONTROLLER),
+        (answers(0.05, 0.9, 0.1, tv=0.95), Route.TV_CONTROLLER),
+        # ...but a ticket about the TV is still a ticket.
+        (answers(0.95, 0.1, 0.1, tv=0.9), Route.GENERAL_ENQUIRY),
+        (answers(0.05, 0.9, 0.1, tv=0.5), None),
     ],
 )
 def test_decide_route_applies_decision_table(probabilities, route):
@@ -102,12 +117,12 @@ def test_jev_router_sends_all_questions_in_one_request():
     state, questions = client.system_one.call_args.args
     assert state["latest_user_message"] == "Why is CH398 black?"
     assert state["internal_systems"] == PROMPT.state["internal_systems"]
-    assert set(questions) == {WANTS_TICKET, WANTS_PROBLEM_SOLVED, NEEDS_INTERNAL_DOCS}
+    assert set(questions) == ALL_QUESTIONS
     assert questions[WANTS_TICKET].instructions == PROMPT.questions[WANTS_TICKET].instructions
 
 
 def test_shipped_prompt_defines_every_decision_table_question():
-    assert set(PROMPT.questions) == {WANTS_TICKET, WANTS_PROBLEM_SOLVED, NEEDS_INTERNAL_DOCS}
+    assert set(PROMPT.questions) == ALL_QUESTIONS
     assert PROMPT.state
 
 
@@ -187,7 +202,7 @@ def test_jev_call_is_traced_as_generation_with_scores_and_route():
     assert start["name"] == JEV_OBSERVATION_NAME
     assert start["as_type"] == "generation"
     assert start["input"]["state"]["latest_user_message"] == "CH398 is black"
-    assert set(start["input"]["questions"]) == {WANTS_TICKET, WANTS_PROBLEM_SOLVED, NEEDS_INTERNAL_DOCS}
+    assert set(start["input"]["questions"]) == ALL_QUESTIONS
     observation.update.assert_called_once_with(
         model="jev-1.14.0",
         output={"probabilities": answers(0.02, 0.96, 0.1), "route": "troubleshooting_agent"},
